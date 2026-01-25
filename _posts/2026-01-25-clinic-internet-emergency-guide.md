@@ -6,7 +6,7 @@ description: "KT/SKT/LG 인터넷 장애 발생 시 진료 마비를 막는 비�
 date: 2026-01-25 21:37:00 +0900
 categories: [DocSkills]
 tags: [개원가팁, 병원인터넷, 테더링, ICS, 네트워크장애, 진료실생존스킬, 수진자자격조회, DUR오류, 심평원접속, 공단연동, EMR접속]
-author: Dr.softkorea
+author: dr_softkorea
 mermaid: true
 ---
 
