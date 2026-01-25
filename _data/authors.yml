@@ -1,6 +1,5 @@
 # _data/authors.yml
 dr_softkorea:
   name: Dr.softkorea
-  twitter: username  # (선택)
-  github: username   # (선택)
-  url: https://your-site.com  # (선택)
+  github: softkorea   # (선택)
+  url: https://softkorea.github.io/  # (선택)
