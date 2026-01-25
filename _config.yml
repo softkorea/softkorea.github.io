@@ -23,10 +23,13 @@ description: >- # used by seo meta and the atom feed
 
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.
-url: ""
+url: "https://username.github.io"
 
 github:
   username: softkorea # change to your GitHub username
+
+plugins:
+  - jekyll-sitemap  # 이 줄이 반드시 포함되어야 합니다.
 
 twitter:
   username:  # change to your Twitter username
