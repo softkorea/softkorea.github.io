@@ -8,6 +8,9 @@ categories: [DocSkills]
 tags: [개원가팁, 병원인터넷, 테더링, ICS, 네트워크장애, 진료실생존스킬, 수진자자격조회, DUR오류, 심평원접속, 공단연동, EMR접속]
 author: dr_softkorea
 mermaid: true
+image:
+  path: /assets/img/posts/2026-01-25-clinic-internet-emergency-guide/internet-emergency-guide-cover.webp
+  alt: "인터넷 장애 비상 대응 가이드"
 ---
 
 # 의원 네트워크 장애 비상 대응 가이드
