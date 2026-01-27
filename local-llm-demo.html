@@ -554,29 +554,54 @@
       </p>
     </section>
 
-    <!-- PNA Troubleshooting Section -->
-    <section class="info-section" style="border: 1px solid rgba(245, 158, 11, 0.3); background: rgba(245, 158, 11, 0.05);">
-      <h3>⚠️ CORS 설정 후에도 연결 안 될 때 (Chrome PNA)</h3>
+    <!-- Deployment Troubleshooting Section -->
+    <section class="info-section" style="border: 1px solid rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.05);">
+      <h3>🚀 배포 환경에서 연결 안 될 때 (Chrome 124+)</h3>
       <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
-        Chrome 94+에서는 Private Network Access 정책이 추가로 차단할 수 있습니다.
+        Chrome 124+ 버전은 보안 정책(PNA)으로 HTTPS → localhost 연결이 차단됩니다.<br>
+        <code style="font-size: 0.8rem;">Permission was denied for this request to access the 'loopback' address space</code>
       </p>
-      <div class="info-item" style="background: var(--bg);">
-        <h4>Chrome 플래그 비활성화</h4>
-        <ol style="margin: 0.5rem 0 0 1.2rem; color: var(--text-muted); font-size: 0.85rem;">
-          <li>주소창에 입력: <code>chrome://flags/#block-insecure-private-network-requests</code></li>
-          <li><strong>Disabled</strong>로 변경</li>
-          <li>브라우저 재시작</li>
-        </ol>
-        <p style="color: var(--warning); font-size: 0.8rem; margin-top: 0.75rem;">
-          ⚠️ 테스트 후 Default로 복원 권장
+
+      <div class="info-item" style="background: var(--bg); margin-bottom: 1rem;">
+        <h4>✅ 해결: Chrome 특수 모드로 실행</h4>
+        <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">1. Chrome을 완전히 종료 (시스템 트레이 포함)</p>
+        <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">2. 아래 명령어로 Chrome 실행:</p>
+        <code style="font-size: 0.7rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.75rem; border-radius: 4px; word-break: break-all; line-height: 1.6;">"C:\Program Files\Google\Chrome\Application\chrome.exe" --disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights --disable-web-security --user-data-dir="C:\temp\chrome-dev"</code>
+        <p style="font-size: 0.8rem; color: var(--warning); margin-top: 0.75rem;">
+          ⚠️ 이 모드는 보안이 비활성화되므로, Ollama 테스트 용도로만 사용하세요.
         </p>
+      </div>
+
+      <div class="info-item" style="background: var(--bg);">
+        <h4>📁 바로가기 만들기 (편의용)</h4>
+        <ol style="font-size: 0.8rem; margin: 0.5rem 0 0 1rem; color: var(--text-muted);">
+          <li>바탕화면 우클릭 → 새로 만들기 → 바로가기</li>
+          <li>위 명령어 전체를 붙여넣기</li>
+          <li>이름: "Chrome (Ollama Dev)"</li>
+        </ol>
+      </div>
+
+      <div class="info-grid" style="margin-top: 1rem;">
+        <div class="info-item">
+          <h4>OLLAMA_ORIGINS 확인</h4>
+          <p style="font-size: 0.85rem;">환경 변수 설정 필수:</p>
+          <code style="font-size: 0.75rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.5rem; border-radius: 4px;">setx OLLAMA_ORIGINS "*"</code>
+        </div>
+
+        <div class="info-item">
+          <h4>Ollama 재시작</h4>
+          <p style="font-size: 0.85rem;">환경 변수 변경 후:</p>
+          <ol style="font-size: 0.8rem; margin: 0.5rem 0 0 1rem; color: var(--text-muted);">
+            <li>트레이에서 Ollama 종료</li>
+            <li>Ollama 다시 실행</li>
+          </ol>
+        </div>
       </div>
     </section>
 
     <footer>
       <p>
         이 데모는 <code>https</code> 페이지에서 <code>http://localhost:11434</code>로 직접 통신합니다.<br>
-        <a href="/2026-01-27-local-llm-cors-guide">가이드 포스트로 돌아가기</a> ·
         Chrome/Edge 권장 (Safari 미지원)
       </p>
     </footer>

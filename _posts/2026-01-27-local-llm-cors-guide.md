@@ -1,7 +1,7 @@
 ---
 title: "외부 웹사이트에서 로컬 Ollama 연동하기"
 date: 2026-01-27 14:00:00 +0900
-categories: [Development, LLM]
+categories: [CodeLog]
 tags: [ollama, qwen3, cors, local-llm, javascript]
 author: dr_softkorea
 ---
@@ -272,16 +272,34 @@ if (isInsideThinkBlock) continue; // 출력 스킵
 | 요약이 중간에 끊김 | 토큰 부족 (thinking 포함) | `num_predict: 4096` 이상 |
 | `<think>` 태그 출력됨 | 필터링 누락 | 필터링 코드 추가 |
 
-### Private Network Access (PNA) 차단 시
+### 배포 환경(HTTPS)에서 연결 안 될 때 (Chrome 124+)
 
-Chrome 94+ 버전에서는 HTTPS 사이트 → localhost 요청을 추가로 차단할 수 있다.
-CORS 설정을 했는데도 연결이 안 되면:
+Chrome 124+ 버전은 보안 정책(PNA)으로 HTTPS → localhost 연결이 차단된다.
 
-1. Chrome 주소창에 입력: `chrome://flags/#block-insecure-private-network-requests`
-2. **Disabled**로 변경
-3. 브라우저 재시작
+에러 메시지:
+```
+Permission was denied for this request to access the 'loopback' address space
+```
 
-> 이 설정은 보안을 낮추므로, 테스트 후 다시 Default로 복원 권장.
+**해결: Chrome 특수 모드로 실행**
+
+1. Chrome 완전 종료 (시스템 트레이 포함)
+2. 아래 명령어로 Chrome 실행:
+
+```cmd
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights --disable-web-security --user-data-dir="C:\temp\chrome-dev"
+```
+
+> 이 모드는 보안이 비활성화되므로, Ollama 테스트 용도로만 사용할 것.
+
+**바로가기 만들기 (편의용)**
+1. 바탕화면 우클릭 → 새로 만들기 → 바로가기
+2. 위 명령어 전체를 붙여넣기
+3. 이름: "Chrome (Ollama Dev)"
+
+**함께 확인할 것**
+- `OLLAMA_ORIGINS="*"` 환경 변수 설정
+- Ollama 재시작 (환경 변수 변경 후 필수)
 
 ## 결론
 
