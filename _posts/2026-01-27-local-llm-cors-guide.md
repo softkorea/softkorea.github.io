@@ -11,7 +11,7 @@ author: dr_softkorea
 의료 데이터 요약처럼 민감한 정보를 다룰 때, 외부 API로 데이터를 보내기 꺼려진다.
 로컬 LLM을 쓰면 **데이터가 내 PC를 벗어나지 않는다**.
 
-최근 7B급 모델 성능이 많이 좋아졌다. 직접 테스트해보니 **Qwen3 7B (4-bit 양자화)**로도 한글 요약이 충분히 쓸만하다. RTX 2080 8GB에서 문제없이 돌아간다.
+최근 8B급 모델 성능이 많이 좋아졌다. 직접 테스트해보니 **Qwen3 8B (4-bit 양자화)**로도 한글 요약이 충분히 쓸만하다. RTX 2080 8GB에서 문제없이 돌아간다.
 
 ## 아키텍처
 
@@ -36,9 +36,6 @@ author: dr_softkorea
 ```bash
 # Ollama 설치 후
 ollama pull qwen3:8b
-
-# 또는 더 가벼운 버전 (RTX 2080 8GB에서 테스트 완료)
-ollama pull qwen3:7b
 ```
 
 ### 2. CORS 허용 (필수)
@@ -241,7 +238,7 @@ options: {
 | 12GB | 65536 (64K) | RTX 3060 12GB, 4070 |
 | 16GB+ | 131072 (128K) | RTX 4080, 4090 |
 
-> Qwen3 7B 4-bit 양자화 기준. 모델 크기나 양자화 방식에 따라 달라질 수 있음.
+> Qwen3 8B 4-bit 양자화 기준. 모델 크기나 양자화 방식에 따라 달라질 수 있음.
 
 **`<think>` 블록 필터링 (UI 노출 방지)**
 ```javascript
@@ -303,6 +300,6 @@ Permission was denied for this request to access the 'loopback' address space
 
 ## 결론
 
-- **Qwen3 7B**면 한글 요약에 충분 (RTX 2080 8GB OK)
+- **Qwen3 8B**면 한글 요약에 충분 (RTX 2080 8GB OK)
 - CORS 설정만 하면 외부 웹사이트에서 로컬 LLM 호출 가능
 - 민감한 데이터를 외부로 보내지 않고 AI 기능 구현 가능
