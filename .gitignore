@@ -1,24 +1,42 @@
 # Bundler cache
 .bundle
 vendor
-
-# Jekyll build output
-_site
-.sass-cache
-.jekyll-cache
-.jekyll-metadata
-
-# Gemfile lock (OS specific)
 Gemfile.lock
 
-# IDE
+# Jekyll cache
+.jekyll-cache
+.jekyll-metadata
+_site
+.sass-cache
+
+# RubyGems
+*.gem
+
+# NPM dependencies
+node_modules
+package-lock.json
+
+# IDE configurations
 .idea
-.vscode
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Drafts and workspace (not published)
+# Misc
+_sass/vendors
+assets/js/dist
+
+# Project analysis (local only)
+.project-analysis.md
+CLAUDE.md
 .claude-workspace/
+.claude/
 _drafts/
+
+# Future work tracking
+FUTURE_WORK.md
