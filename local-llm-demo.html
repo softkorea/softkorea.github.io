@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>로컬 LLM 요약 데모 | Local Ollama Integration</title>
+  <style>
+    :root {
+      --primary: #6366f1;
+      --primary-dark: #4f46e5;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-light: #334155;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --border: #475569;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Status Section */
+    .status-section {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .status-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .status-title {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .status-indicator.checking {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--warning);
+    }
+
+    .status-indicator.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+
+    .status-indicator.disconnected {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--error);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-indicator.checking .status-dot {
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .models-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .model-tag {
+      background: var(--surface-light);
+      padding: 0.3rem 0.7rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-family: 'Fira Code', monospace;
+    }
+
+    .model-tag.recommended {
+      background: rgba(99, 102, 241, 0.2);
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+
+    /* Error Guide */
+    .error-guide {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+
+    .error-guide h4 {
+      color: var(--error);
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .error-guide code {
+      display: block;
+      background: var(--bg);
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+      overflow-x: auto;
+    }
+
+    /* Main Card */
+    .main-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    /* Input */
+    .input-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 150px;
+      padding: 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.95rem;
+      line-height: 1.6;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .model-select, .context-select, .think-select {
+      flex: 1;
+      min-width: 130px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    select {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .btn {
+      padding: 0.7rem 1.5rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-dark);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--surface-light);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+
+    /* Output */
+    .output-section {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+
+    .output-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .stats {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-family: 'Fira Code', monospace;
+    }
+
+    .output-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      min-height: 100px;
+      white-space: pre-wrap;
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+
+    .output-box.streaming {
+      border-color: var(--primary);
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: var(--primary);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 0.8s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    .placeholder-text {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* Info Section */
+    .info-section {
+      margin-top: 2rem;
+      padding: 1.5rem;
+      background: var(--surface);
+      border-radius: 12px;
+    }
+
+    .info-section h3 {
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+
+    .info-item {
+      background: var(--bg);
+      padding: 1rem;
+      border-radius: 8px;
+    }
+
+    .info-item h4 {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .info-item p {
+      font-size: 0.9rem;
+    }
+
+    .info-item code {
+      background: var(--surface-light);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    footer a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Mobile */
+    @media (max-width: 640px) {
+      body {
+        padding: 1rem;
+      }
+
+      h1 {
+        font-size: 1.4rem;
+      }
+
+      .controls {
+        flex-direction: column;
+      }
+
+      .model-select {
+        width: 100%;
+      }
+
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🧠 로컬 LLM 요약 데모</h1>
+      <p class="subtitle">외부 서버 없이 브라우저에서 직접 로컬 Ollama 호출</p>
+    </header>
+
+    <!-- Status Section -->
+    <section class="status-section">
+      <div class="status-header">
+        <span class="status-title">Ollama 연결 상태</span>
+        <div id="status-indicator" class="status-indicator checking">
+          <span class="status-dot"></span>
+          <span id="status-text">확인 중...</span>
+        </div>
+      </div>
+      <div id="status-details"></div>
+    </section>
+
+    <!-- Main Card -->
+    <section class="main-card">
+      <h2 class="card-title">텍스트 요약</h2>
+
+      <div class="input-group">
+        <label for="input-text">요약할 텍스트</label>
+        <textarea
+          id="input-text"
+          placeholder="여기에 요약할 텍스트를 입력하세요.
+
+예시: 환자 상담 기록, 의학 논문 초록, 뉴스 기사 등
+
+※ 입력한 데이터는 외부 서버로 전송되지 않습니다.
+   오직 로컬 PC의 Ollama만 사용합니다."
+        ></textarea>
+      </div>
+
+      <div class="controls">
+        <div class="model-select">
+          <label for="model-select" style="margin-bottom: 0.3rem;">모델</label>
+          <select id="model-select">
+            <option value="">모델을 선택하세요</option>
+          </select>
+        </div>
+        <div class="context-select">
+          <label for="context-select" style="margin-bottom: 0.3rem;">컨텍스트</label>
+          <select id="context-select">
+            <option value="8192">8K (저사양)</option>
+            <option value="16384">16K</option>
+            <option value="32768" selected>32K (권장)</option>
+            <option value="65536">64K (12GB+)</option>
+            <option value="131072">128K (16GB+)</option>
+          </select>
+        </div>
+        <div class="think-select">
+          <label for="think-select" style="margin-bottom: 0.3rem;">Thinking</label>
+          <select id="think-select">
+            <option value="think" selected>🧠 Think (고품질)</option>
+            <option value="no_think">⚡ No Think (빠름)</option>
+          </select>
+        </div>
+        <div class="button-group">
+          <button id="summarize-btn" class="btn btn-primary" disabled>
+            <span>✨</span> 요약하기
+          </button>
+          <button id="clear-btn" class="btn btn-secondary">
+            지우기
+          </button>
+        </div>
+      </div>
+
+      <div id="output-section" class="output-section" style="display: none;">
+        <div class="output-header">
+          <span class="output-title">요약 결과</span>
+          <span id="stats" class="stats"></span>
+        </div>
+        <div id="output-box" class="output-box">
+          <span class="placeholder-text">요약 결과가 여기에 표시됩니다...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Info Section -->
+    <section class="info-section">
+      <h3>📋 설정 가이드</h3>
+      <div class="info-grid">
+        <div class="info-item">
+          <h4>1. Ollama 설치</h4>
+          <p><a href="https://ollama.com" target="_blank">ollama.com</a>에서 설치</p>
+        </div>
+        <div class="info-item">
+          <h4>2. 모델 다운로드</h4>
+          <p><code>ollama pull qwen3:8b</code></p>
+        </div>
+        <div class="info-item">
+          <h4>3. CORS 설정 (Windows)</h4>
+          <p>PowerShell 관리자:<br><code>setx OLLAMA_ORIGINS "*"</code></p>
+        </div>
+        <div class="info-item">
+          <h4>4. Ollama 재시작</h4>
+          <p>트레이 아이콘에서 종료 후 다시 실행</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Security Warning Section -->
+    <section class="info-section" style="border: 1px solid rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05);">
+      <h3>🔒 테스트 후 CORS 비활성화 (보안)</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+        CORS를 열어두면 악성 웹사이트도 로컬 Ollama에 접근할 수 있습니다. 테스트 후에는 설정을 해제하세요.
+      </p>
+      <div class="info-grid">
+        <div class="info-item">
+          <h4>Windows - 비활성화</h4>
+          <p style="font-size: 0.85rem;">PowerShell 관리자:</p>
+          <code style="font-size: 0.75rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.5rem; border-radius: 4px;">reg delete "HKCU\Environment" /v OLLAMA_ORIGINS /f</code>
+        </div>
+        <div class="info-item">
+          <h4>macOS / Linux - 비활성화</h4>
+          <p style="font-size: 0.85rem;">~/.zshrc에서 삭제:</p>
+          <code style="font-size: 0.75rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.5rem; border-radius: 4px;"># export OLLAMA_ORIGINS="*"</code>
+        </div>
+      </div>
+      <p style="color: var(--warning); font-size: 0.85rem; margin-top: 1rem;">
+        💡 자주 사용한다면 <code>OLLAMA_ORIGINS="https://신뢰할수있는사이트.com"</code>처럼 특정 도메인만 허용하세요.
+      </p>
+    </section>
+
+    <!-- Deployment Troubleshooting Section -->
+    <section class="info-section" style="border: 1px solid rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.05);">
+      <h3>🚀 배포 환경에서 연결 안 될 때 (Chrome 124+)</h3>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+        Chrome 124+ 버전은 보안 정책(PNA)으로 HTTPS → localhost 연결이 차단됩니다.<br>
+        <code style="font-size: 0.8rem;">Permission was denied for this request to access the 'loopback' address space</code>
+      </p>
+
+      <div class="info-item" style="background: var(--bg); margin-bottom: 1rem;">
+        <h4>✅ 해결: Chrome 특수 모드로 실행</h4>
+        <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">1. Chrome을 완전히 종료 (시스템 트레이 포함)</p>
+        <p style="font-size: 0.85rem; margin-bottom: 0.5rem;">2. 아래 명령어로 Chrome 실행:</p>
+        <code style="font-size: 0.7rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.75rem; border-radius: 4px; word-break: break-all; line-height: 1.6;">"C:\Program Files\Google\Chrome\Application\chrome.exe" --disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights --disable-web-security --user-data-dir="C:\temp\chrome-dev"</code>
+        <p style="font-size: 0.8rem; color: var(--warning); margin-top: 0.75rem;">
+          ⚠️ 이 모드는 보안이 비활성화되므로, Ollama 테스트 용도로만 사용하세요.
+        </p>
+      </div>
+
+      <div class="info-item" style="background: var(--bg);">
+        <h4>📁 바로가기 만들기 (편의용)</h4>
+        <ol style="font-size: 0.8rem; margin: 0.5rem 0 0 1rem; color: var(--text-muted);">
+          <li>바탕화면 우클릭 → 새로 만들기 → 바로가기</li>
+          <li>위 명령어 전체를 붙여넣기</li>
+          <li>이름: "Chrome (Ollama Dev)"</li>
+        </ol>
+      </div>
+
+      <div class="info-grid" style="margin-top: 1rem;">
+        <div class="info-item">
+          <h4>OLLAMA_ORIGINS 확인</h4>
+          <p style="font-size: 0.85rem;">환경 변수 설정 필수:</p>
+          <code style="font-size: 0.75rem; display: block; margin-top: 0.5rem; background: var(--surface); padding: 0.5rem; border-radius: 4px;">setx OLLAMA_ORIGINS "*"</code>
+        </div>
+
+        <div class="info-item">
+          <h4>Ollama 재시작</h4>
+          <p style="font-size: 0.85rem;">환경 변수 변경 후:</p>
+          <ol style="font-size: 0.8rem; margin: 0.5rem 0 0 1rem; color: var(--text-muted);">
+            <li>트레이에서 Ollama 종료</li>
+            <li>Ollama 다시 실행</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        이 데모는 <code>https</code> 페이지에서 <code>http://localhost:11434</code>로 직접 통신합니다.<br>
+        Chrome/Edge 권장 (Safari 미지원)
+      </p>
+    </footer>
+  </div>
+
+  <script>
+    // ============================================================
+    // Configuration
+    // ============================================================
+    const OLLAMA_URL = 'http://localhost:11434';
+    const RECOMMENDED_MODELS = ['qwen3:8b', 'qwen3:7b', 'qwen3:4b', 'qwen2.5:7b', 'qwen2.5:3b'];
+
+    // ============================================================
+    // DOM Elements
+    // ============================================================
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    const statusDetails = document.getElementById('status-details');
+    const modelSelect = document.getElementById('model-select');
+    const contextSelect = document.getElementById('context-select');
+    const thinkSelect = document.getElementById('think-select');
+    const inputText = document.getElementById('input-text');
+    const summarizeBtn = document.getElementById('summarize-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const outputSection = document.getElementById('output-section');
+    const outputBox = document.getElementById('output-box');
+    const stats = document.getElementById('stats');
+
+    // ============================================================
+    // State
+    // ============================================================
+    let isConnected = false;
+    let isStreaming = false;
+    let abortController = null;
+
+    // ============================================================
+    // Ollama API Functions
+    // ============================================================
+
+    /**
+     * Ollama 연결 상태 및 설치된 모델 확인
+     */
+    async function checkOllamaStatus() {
+      try {
+        const response = await fetch(`${OLLAMA_URL}/api/tags`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(5000)
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const models = data.models?.map(m => m.name) || [];
+
+        return {
+          connected: true,
+          models: models,
+          error: null
+        };
+
+      } catch (error) {
+        let errorType = 'unknown';
+        let errorMessage = 'Ollama 연결 실패';
+
+        if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+          errorType = 'not_running';
+          errorMessage = 'Ollama가 실행 중이 아닙니다';
+        } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+          // CORS 에러도 이쪽으로 옴
+          errorType = 'cors_or_not_running';
+          errorMessage = 'Ollama 미실행 또는 CORS 설정 필요';
+        }
+
+        return {
+          connected: false,
+          models: [],
+          error: errorMessage,
+          errorType: errorType
+        };
+      }
+    }
+
+    /**
+     * 스트리밍 방식으로 요약 요청
+     */
+    async function summarizeText(text, model, numCtx, thinkMode, onChunk, onComplete, onError) {
+      abortController = new AbortController();
+
+      const systemPrompt = `당신은 한국어 요약 전문가입니다.
+주어진 텍스트를 핵심 내용 위주로 간결하게 요약하세요.
+- 한국어로 답변
+- 3-5문장 이내
+- 핵심 정보만 포함
+- 불필요한 수식어 제외`;
+
+      // 사용자 프롬프트 구성
+      let userPrompt = `[텍스트]\n${text}\n\n[요약]`;
+      if (thinkMode === 'no_think') {
+        userPrompt += ' /no_think';
+      }
+
+      // /api/chat 엔드포인트 사용 (더 안정적인 옵션 적용)
+      const requestBody = {
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        stream: true,
+        options: {
+          temperature: 0.3,
+          num_ctx: numCtx,
+          num_predict: -1  // -1 = 무제한 (컨텍스트 내에서)
+        }
+      };
+
+      const startTime = performance.now();
+      let tokenCount = 0;
+
+      try {
+        const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody),
+          signal: abortController.signal
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('MODEL_NOT_FOUND');
+          }
+          throw new Error(`HTTP_${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let fullResponse = '';
+        let buffer = ''; // 불완전한 청크를 저장할 버퍼
+        let isInsideThinkBlock = false; // <think> 블록 내부인지 추적
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          // 1. 버퍼에 새로운 데이터 추가
+          buffer += decoder.decode(value, { stream: true });
+
+          // 2. 줄바꿈 기준으로 분리
+          const lines = buffer.split('\n');
+
+          // 3. 마지막 조각은 불완전할 수 있으므로 버퍼에 남겨둠
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.trim() === '') continue;
+            try {
+              const json = JSON.parse(line);
+
+              if (json.message && json.message.content) {
+                // Qwen3 <think> 태그 필터링 (thinking 모드 출력 제거)
+                let cleanResponse = json.message.content;
+
+                // <think> 블록 시작 감지
+                if (cleanResponse.includes('<think>')) {
+                  isInsideThinkBlock = true;
+                  cleanResponse = cleanResponse.replace(/<think>/g, '');
+                }
+
+                // <think> 블록 종료 감지
+                if (cleanResponse.includes('</think>')) {
+                  isInsideThinkBlock = false;
+                  cleanResponse = cleanResponse.replace(/<\/think>/g, '');
+                }
+
+                // think 블록 내부면 출력 스킵
+                if (isInsideThinkBlock) continue;
+
+                // 빈 응답이면 스킵
+                if (cleanResponse.trim() === '') continue;
+
+                fullResponse += cleanResponse;
+                tokenCount++;
+                onChunk(cleanResponse, fullResponse);
+              }
+
+              if (json.done === true) {
+                const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                onComplete(fullResponse, {
+                  tokens: tokenCount,
+                  elapsed: elapsed,
+                  tokensPerSec: (tokenCount / parseFloat(elapsed)).toFixed(1)
+                });
+              }
+            } catch (parseError) {
+              console.warn('JSON parsing skipped (incomplete chunk):', line.substring(0, 50));
+            }
+          }
+        }
+
+        // 루프 종료 후 버퍼에 남은 데이터 처리
+        if (buffer.trim()) {
+          try {
+            const json = JSON.parse(buffer);
+            if (json.message && json.message.content) {
+              fullResponse += json.message.content;
+              tokenCount++;
+              onChunk(json.message.content, fullResponse);
+            }
+          } catch (e) {
+            // 무시
+          }
+        }
+
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          onError({ type: 'cancelled', message: '요청이 취소되었습니다' });
+        } else if (error.message === 'MODEL_NOT_FOUND') {
+          onError({
+            type: 'model_not_found',
+            message: `모델 '${model}'을 찾을 수 없습니다`,
+            action: `터미널에서 실행: ollama pull ${model}`
+          });
+        } else {
+          onError({
+            type: 'unknown',
+            message: error.message
+          });
+        }
+      }
+    }
+
+    // ============================================================
+    // UI Update Functions
+    // ============================================================
+
+    function updateStatusUI(status) {
+      isConnected = status.connected;
+
+      if (status.connected) {
+        statusIndicator.className = 'status-indicator connected';
+        statusText.textContent = '연결됨';
+
+        // 모델 목록 표시
+        if (status.models.length > 0) {
+          const modelsHtml = status.models.map(m => {
+            const isRecommended = RECOMMENDED_MODELS.some(r => m.startsWith(r.replace(':latest', '')));
+            return `<span class="model-tag ${isRecommended ? 'recommended' : ''}">${m}</span>`;
+          }).join('');
+          statusDetails.innerHTML = `<div class="models-list">${modelsHtml}</div>`;
+
+          // 모델 셀렉트 업데이트
+          updateModelSelect(status.models);
+        }
+
+        summarizeBtn.disabled = false;
+
+      } else {
+        statusIndicator.className = 'status-indicator disconnected';
+        statusText.textContent = '연결 안됨';
+
+        // 에러 가이드 표시
+        statusDetails.innerHTML = `
+          <div class="error-guide">
+            <h4>⚠️ ${status.error}</h4>
+            <p>다음을 확인해주세요:</p>
+            <ol style="margin: 0.5rem 0 0 1.2rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Ollama가 실행 중인지 확인</li>
+              <li>CORS 환경 변수 설정 확인</li>
+            </ol>
+            <code>
+# Windows PowerShell (관리자)
+setx OLLAMA_ORIGINS "*"
+# 그 후 Ollama 재시작
+            </code>
+          </div>
+        `;
+
+        summarizeBtn.disabled = true;
+      }
+    }
+
+    function updateModelSelect(models) {
+      modelSelect.innerHTML = '<option value="">모델을 선택하세요</option>';
+
+      // 추천 모델 우선 정렬
+      const sortedModels = [...models].sort((a, b) => {
+        const aRecommended = RECOMMENDED_MODELS.some(r => a.includes(r.split(':')[0]));
+        const bRecommended = RECOMMENDED_MODELS.some(r => b.includes(r.split(':')[0]));
+        if (aRecommended && !bRecommended) return -1;
+        if (!aRecommended && bRecommended) return 1;
+        return 0;
+      });
+
+      sortedModels.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        const isRecommended = RECOMMENDED_MODELS.some(r => model.includes(r.split(':')[0]));
+        option.textContent = isRecommended ? `⭐ ${model}` : model;
+        modelSelect.appendChild(option);
+      });
+
+      // 첫 번째 추천 모델 자동 선택
+      const firstRecommended = sortedModels.find(m =>
+        RECOMMENDED_MODELS.some(r => m.includes(r.split(':')[0]))
+      );
+      if (firstRecommended) {
+        modelSelect.value = firstRecommended;
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showOutput(text, streaming = false) {
+      outputSection.style.display = 'block';
+      outputBox.className = `output-box ${streaming ? 'streaming' : ''}`;
+      // HTML 특수문자 이스케이프 처리
+      const safeText = escapeHtml(text);
+      outputBox.innerHTML = safeText + (streaming ? '<span class="cursor"></span>' : '');
+    }
+
+    function showStats(statsData, numCtx, thinkMode) {
+      const ctxLabel = numCtx >= 1024 ? `${numCtx / 1024}K` : numCtx;
+      const thinkLabel = thinkMode === 'think' ? '🧠' : '⚡';
+      stats.textContent = `${statsData.tokens} tokens · ${statsData.elapsed}s · ${statsData.tokensPerSec} t/s · ctx: ${ctxLabel} ${thinkLabel}`;
+    }
+
+    function resetOutput() {
+      outputSection.style.display = 'none';
+      outputBox.innerHTML = '<span class="placeholder-text">요약 결과가 여기에 표시됩니다...</span>';
+      stats.textContent = '';
+    }
+
+    // ============================================================
+    // Event Handlers
+    // ============================================================
+
+    summarizeBtn.addEventListener('click', async () => {
+      const text = inputText.value.trim();
+      const model = modelSelect.value;
+      const numCtx = parseInt(contextSelect.value, 10);
+      const thinkMode = thinkSelect.value;
+
+      if (!text) {
+        alert('요약할 텍스트를 입력해주세요.');
+        return;
+      }
+
+      if (!model) {
+        alert('모델을 선택해주세요.');
+        return;
+      }
+
+      // UI 상태 변경
+      isStreaming = true;
+      summarizeBtn.disabled = true;
+      summarizeBtn.innerHTML = '<span>⏳</span> 요약 중...';
+      showOutput('', true);
+
+      await summarizeText(
+        text,
+        model,
+        numCtx,
+        thinkMode,
+        // onChunk
+        (token, fullText) => {
+          showOutput(fullText, true);
+        },
+        // onComplete
+        (finalText, statsData) => {
+          isStreaming = false;
+          summarizeBtn.disabled = false;
+          summarizeBtn.innerHTML = '<span>✨</span> 요약하기';
+          showOutput(finalText, false);
+          showStats(statsData, numCtx, thinkMode);
+        },
+        // onError
+        (error) => {
+          isStreaming = false;
+          summarizeBtn.disabled = false;
+          summarizeBtn.innerHTML = '<span>✨</span> 요약하기';
+          outputBox.innerHTML = `<span style="color: var(--error);">❌ ${error.message}</span>`;
+          if (error.action) {
+            outputBox.innerHTML += `<br><code style="margin-top: 0.5rem; display: block;">${error.action}</code>`;
+          }
+        }
+      );
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (isStreaming && abortController) {
+        abortController.abort();
+      }
+      inputText.value = '';
+      resetOutput();
+    });
+
+    // ============================================================
+    // Initialize
+    // ============================================================
+
+    async function init() {
+      const status = await checkOllamaStatus();
+      updateStatusUI(status);
+
+      // 5초마다 상태 체크 (연결 안 됐을 때만)
+      setInterval(async () => {
+        if (!isConnected && !isStreaming) {
+          const status = await checkOllamaStatus();
+          updateStatusUI(status);
+        }
+      }, 5000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
