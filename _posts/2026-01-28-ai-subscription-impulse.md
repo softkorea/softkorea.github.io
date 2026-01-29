@@ -1,7 +1,7 @@
 ---
 title: "생산성 향상, 그런데 무엇을 생산하는가"
 date: 2026-01-28 20:00:00 +0900
-categories: [Diary]
+categories: [diary]
 tags: [ai, gemini, claude, 생산성, 구독]
 author: dr_softkorea
 image:
