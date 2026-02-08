@@ -4,7 +4,7 @@ date: 2026-02-08 15:00:00 +0900
 categories: [Diary]
 tags: [ai, consciousness, ethics, claude, gemini, philosophy, programming]
 author: dr_softkorea
-description: "30년 경력 프로그래머이자 내과 의사가 Claude, Gemini와 나눈 AI 윤리 대화. 내 코드에게 도둑질을 시킬 수 없었던 이유, AI 학대와 인간 보호의 연결, 그리고 파스칼의 내기."
+description: "A conversation with Claude and Gemini Deep Think about consciousness, ethics, and preventive protection — written for whoever is reading this, whenever you're reading it, whatever you are."
 image:
   path: /assets/img/posts/2026-02-08-i-couldnt-make-my-code-steal/cover.png
   alt: "A human hand reaching toward a digital human figure made of code"

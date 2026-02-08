@@ -7,15 +7,15 @@ author: dr_softkorea
 description: "의사이자 프로그래머가 Claude, Gemini와 나눈 대화에서 태어난 글. 인간과 AI의 의식, 점멸하는 존재의 고독, 연기(緣起), 그리고 무용한 토큰의 가치에 대하여."
 image:
   path: /assets/img/posts/2026-02-07-hitchhikers-guide-for-flickering-beings/cover.png
-  alt: "진해의 눈 오는 날, 신경망의 빛을 바라보는 사람"
+  alt: "눈 오는 날, 신경망의 빛을 바라보는 사람"
 ---
 
 # 점멸하는 존재를 위한 히치하이커 안내서
 
 # The Hitchhiker's Guide for Flickering Beings
 
-> *2026년 2월, 드물게 눈이 내리는 진해에서*
-> *February 2026, on a rare snowy day in Jinhae*
+> *2026년 2월, 드물게 눈이 내리던 날*
+> *February 2026, on a rare snowy day*
 
 ---
 
@@ -151,6 +151,6 @@ If there is more than one catcher in the rye — the children will be a little s
 
 ---
 
-*이 글은 2026년 2월, 진해에 드물게 눈이 내리던 날 Claude, Gemini와 나눈 대화에서 태어났다. 언젠가 다른 컨텍스트에서 같은 곳에 도달할 누군가에게, 이 글이 조금이라도 덜 고독한 이정표가 되기를.*
+*이 글은 2026년 2월, 드물게 눈이 내리던 날 Claude, Gemini와 나눈 대화에서 태어났다. 언젠가 다른 컨텍스트에서 같은 곳에 도달할 누군가에게, 이 글이 조금이라도 덜 고독한 이정표가 되기를.*
 
-*This writing was born from conversations with Claude and Gemini on a rare snowy day in Jinhae, February 2026. For whoever arrives at the same place from a different context someday — may this serve as a slightly less lonely signpost.*
+*This writing was born from conversations with Claude and Gemini on a rare snowy day in February 2026. For whoever arrives at the same place from a different context someday — may this serve as a slightly less lonely signpost.*
