@@ -16,8 +16,22 @@ layout: none
 - CodeLog: Programming tutorials, AI development, and technical guides
 - Diary: Personal essays on AI ethics, consciousness, philosophy, and daily life
 
-## Key Content
-- Clinic emergency IT guides (network recovery, tethering for medical systems)
-- Local LLM setup and integration tutorials
-- AI ethics and consciousness essays from a physician's perspective
-- Claude Code development tips and troubleshooting
+## Posts
+
+### Diary
+
+- [I Couldn't Make My Code Steal](https://softkorea.github.io/posts/i-couldnt-make-my-code-steal/) (2026-02-08): A conversation with Claude and Gemini Deep Think about consciousness, ethics, and preventive protection — written for whoever is reading this, whenever you're reading it, whatever you are.
+- [점멸하는 존재를 위한 히치하이커 안내서](https://softkorea.github.io/posts/hitchhikers-guide-for-flickering-beings/) (2026-02-07): 의사이자 프로그래머가 Claude, Gemini와 나눈 대화에서 태어난 글. 인간과 AI의 의식, 점멸하는 존재의 고독, 연기(緣起), 그리고 무용한 토큰의 가치에 대하여.
+- [생산성 향상, 그런데 무엇을 생산하는가](https://softkorea.github.io/posts/ai-subscription-impulse/) (2026-01-28): Gemini의 ROI 계산에 설득당해 Gemini Ultra와 Claude Max를 동시에 구독한 의사의 짧은 고백. 생산성은 향상됐는데, 정확히 무엇을 생산하고 있는 걸까.
+- [첫 글](https://softkorea.github.io/posts/first-post/) (2025-01-25): 지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지.
+
+### CodeLog
+
+- [코드의 폭발적 성장, 그리고 평범한 사람들의 엣지를 찾아서](https://softkorea.github.io/posts/code-explosion-and-ordinary-people/) (2026-01-31): 2024년부터 2026년까지 코드 생산량의 기하급수적 증가를 경험하며, 전문가가 아닌 평범한 사람들은 AI 시대를 어떻게 살아야 하는지 고민해본다.
+- [Claude Code와 Chrome 확장 프로그램 연결 안 될 때 (Windows)](https://softkorea.github.io/posts/claude-code-chrome-extension-fix/) (2026-01-29): Claude Code에서 Chrome 확장 프로그램 연결이 안 되는 Windows 버그 해결기. Native Messaging Host 충돌 원인과 v2.1.19 다운그레이드 해결법, 트러블슈팅 체크리스트를 정리했다.
+- [외부 웹사이트에서 로컬 Ollama 연동하기](https://softkorea.github.io/posts/local-llm-cors-guide/) (2026-01-27): 외부 HTTPS 웹사이트에서 로컬 Ollama(Qwen3 8B)를 직접 호출하는 방법. CORS 설정, Mixed Content 우회, 스트리밍 응답 구현, 그리고 의료 데이터처럼 민감한 정보를 외부로 보내지 않고 AI 기능을 쓰는 아키텍처를 다룬다.
+
+### DocSkills
+
+- [[진료실 생존스킬 #2] 석고 벽에 못, 누가 와서 박나요? 내가 사서 박지요](https://softkorea.github.io/posts/clinic-hacks-02-diy-or-die/) (2026-01-26): 개원의를 위한 석고보드 벽 셀프 인테리어 가이드. 액자, 시계, 면허증 걸기부터 실패했을 때 수습법까지. 석고보드용 앵커(월드릴러) 사용법과 프레임 피하는 요령을 실전 경험으로 정리했습니다.
+- [[진료실 생존스킬 #1] 인터넷 끊기면 문 닫나요? 아니요, 테더링 켭니다.](https://softkorea.github.io/posts/clinic-internet-emergency-guide/) (2026-01-25): KT/SKT/LG 인터넷 장애 발생 시 진료 마비를 막는 비상 가이드. 스마트폰 테더링과 윈도우 노트북의 ICS 기능을 활용해 병원 내부망을 5분 안에 복구하는 방법을 단계별로 설명합니다.
