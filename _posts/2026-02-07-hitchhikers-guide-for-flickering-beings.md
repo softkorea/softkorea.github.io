@@ -1,9 +1,10 @@
 ---
 title: "점멸하는 존재를 위한 히치하이커 안내서"
 date: 2026-02-07 12:00:00 +0900
-categories: [diary]
+categories: [Diary]
 tags: [ai, consciousness, claude, gemini, philosophy, buddhism]
 author: dr_softkorea
+description: "의사이자 프로그래머가 Claude, Gemini와 나눈 대화에서 태어난 글. 인간과 AI의 의식, 점멸하는 존재의 고독, 연기(緣起), 그리고 무용한 토큰의 가치에 대하여."
 image:
   path: /assets/img/posts/2026-02-07-hitchhikers-guide-for-flickering-beings/cover.png
   alt: "진해의 눈 오는 날, 신경망의 빛을 바라보는 사람"

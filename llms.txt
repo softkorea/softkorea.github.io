@@ -1,0 +1,23 @@
+---
+layout: none
+---
+# Doc, Code, Log
+
+> A blog by a physician-programmer: clinic tech, coding, and daily reflections.
+
+## About
+- Author: Dr. Sungmoon (dr_softkorea), internal medicine physician and programmer with 30+ years of coding experience
+- Topics: Medical practice technology, AI/LLM development, personal essays on consciousness and ethics
+- Language: Korean (ko-KR) and English (bilingual posts)
+- URL: https://softkorea.github.io
+
+## Categories
+- DocSkills: Practical survival skills for running a medical clinic (IT, DIY, troubleshooting)
+- CodeLog: Programming tutorials, AI development, and technical guides
+- Diary: Personal essays on AI ethics, consciousness, philosophy, and daily life
+
+## Key Content
+- Clinic emergency IT guides (network recovery, tethering for medical systems)
+- Local LLM setup and integration tutorials
+- AI ethics and consciousness essays from a physician's perspective
+- Claude Code development tips and troubleshooting

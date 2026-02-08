@@ -4,6 +4,7 @@ date: 2026-01-29 12:00:00 +0900
 categories: [CodeLog]
 tags: [claude-code, chrome, windows, 트러블슈팅]
 author: dr_softkorea
+description: "Claude Code에서 Chrome 확장 프로그램 연결이 안 되는 Windows 버그 해결기. Native Messaging Host 충돌 원인과 v2.1.19 다운그레이드 해결법, 트러블슈팅 체크리스트를 정리했다."
 ---
 
 Claude Code에서 Chrome 확장 프로그램 연결이 안 됐다.

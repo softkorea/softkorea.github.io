@@ -4,6 +4,7 @@ date: 2026-01-27 14:00:00 +0900
 categories: [CodeLog]
 tags: [ollama, qwen3, cors, local-llm, javascript]
 author: dr_softkorea
+description: "외부 HTTPS 웹사이트에서 로컬 Ollama(Qwen3 8B)를 직접 호출하는 방법. CORS 설정, Mixed Content 우회, 스트리밍 응답 구현, 그리고 의료 데이터처럼 민감한 정보를 외부로 보내지 않고 AI 기능을 쓰는 아키텍처를 다룬다."
 ---
 
 ## 왜 로컬 LLM인가?

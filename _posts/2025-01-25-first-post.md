@@ -1,9 +1,10 @@
 ---
 title: "첫 글"
 date: 2025-01-25 18:10:00 +0900
-categories: [diary]
+categories: [Diary]
 tags: [diary]
 author: dr_softkorea
+description: "지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지."
 ---
 지친 일요일밤 문득 든 생각을 Claude 세션에서 진행하다 아래 글을 발견하여 시작해본다.  
 기록들을 남기면 이 기록들을 바탕으로 좀 더 멀리 가볼 수 있으리라 믿으면서 남겨본다.

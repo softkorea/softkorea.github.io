@@ -1,9 +1,10 @@
 ---
 title: "생산성 향상, 그런데 무엇을 생산하는가"
 date: 2026-01-28 20:00:00 +0900
-categories: [diary]
+categories: [Diary]
 tags: [ai, gemini, claude, 생산성, 구독]
 author: dr_softkorea
+description: "Gemini의 ROI 계산에 설득당해 Gemini Ultra와 Claude Max를 동시에 구독한 의사의 짧은 고백. 생산성은 향상됐는데, 정확히 무엇을 생산하고 있는 걸까."
 image:
   path: /assets/img/posts/2026-01-28-ai-subscription-impulse/cover.webp
   alt: "AI 구독 서비스"
