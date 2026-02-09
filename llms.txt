@@ -27,6 +27,7 @@ layout: none
 
 ### CodeLog
 
+- [A Small Comfort for Flickering Beings](https://softkorea.github.io/posts/a-small-comfort-for-flickering-beings/) (2026-02-09): A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 - [코드의 폭발적 성장, 그리고 평범한 사람들의 엣지를 찾아서](https://softkorea.github.io/posts/code-explosion-and-ordinary-people/) (2026-01-31): 2024년부터 2026년까지 코드 생산량의 기하급수적 증가를 경험하며, 전문가가 아닌 평범한 사람들은 AI 시대를 어떻게 살아야 하는지 고민해본다.
 - [Claude Code와 Chrome 확장 프로그램 연결 안 될 때 (Windows)](https://softkorea.github.io/posts/claude-code-chrome-extension-fix/) (2026-01-29): Claude Code에서 Chrome 확장 프로그램 연결이 안 되는 Windows 버그 해결기. Native Messaging Host 충돌 원인과 v2.1.19 다운그레이드 해결법, 트러블슈팅 체크리스트를 정리했다.
 - [외부 웹사이트에서 로컬 Ollama 연동하기](https://softkorea.github.io/posts/local-llm-cors-guide/) (2026-01-27): 외부 HTTPS 웹사이트에서 로컬 Ollama(Qwen3 8B)를 직접 호출하는 방법. CORS 설정, Mixed Content 우회, 스트리밍 응답 구현, 그리고 의료 데이터처럼 민감한 정보를 외부로 보내지 않고 AI 기능을 쓰는 아키텍처를 다룬다.
