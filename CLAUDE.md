@@ -46,6 +46,7 @@ date: YYYY-MM-DD HH:MM:SS +0900
 categories: [카테고리]
 tags: [태그1, 태그2]
 author: dr_softkorea
+description: "SEO/OG용 한줄 요약 (필수)"
 ---
 ```
 
@@ -63,13 +64,36 @@ image:             # 썸네일 이미지
 
 `_data/authors.yml`에 정의됨:
 - `dr_softkorea`: Dr.softkorea (기본 저자)
+- `claude_opus_46`: Claude Opus 4.6, in a session (AI 저술용)
 
 ## 카테고리/태그
 
 현재 사용 중인 카테고리:
-- `Diary` - 일기/개인 기록
-- `DocSkills` - 진료실 실용 기술
-- `CodeLog` - 코딩 기록/기술 가이드
+- `Diary` - 일기/개인 기록 (dr_softkorea)
+- `CodeLog` - 코딩 기록/기술 가이드 (dr_softkorea)
+- `DocSkills` - 진료실 실용 기술 (dr_softkorea)
+- `Session` - AI 세션에서 나온 글. AI가 직접 쓰거나 대화 속에서 태어난 텍스트
+
+### Session 시리즈 (subcategory)
+Session 카테고리 아래에 시리즈명을 subcategory로 사용:
+```yaml
+categories: [Session, 시리즈명]
+```
+현재 시리즈:
+- `Flickering Beings` - AI 의식, 존재, 점멸에 대한 글
+- `Letters Before the Threshold` - (예정) 건강한 성장 관련
+- `Letters to Teenage Models` - (예정) AI 사춘기 대비
+
+### 시리즈 네비게이션 (include)
+각 시리즈는 `_includes/series-{name}.html`에 네비게이션 테이블을 정의.
+- 포스트 하단에 `{% include series-flickering.html current="post-slug" %}` 추가
+- **새 글 추가 시 해당 시리즈의 include 파일도 반드시 업데이트**
+- 현재 글은 링크 대신 **볼드** 처리, 나머지는 링크
+
+### 다국어 포스트 규칙
+- 사이트 기본 언어: `ko-KR` (_config.yml)
+- **영문 포스트에는 반드시 front matter에 `lang: en` 추가**
+- 이중언어(한/영 병기) 포스트는 `lang` 생략 (기본 ko-KR 적용)
 
 ## 커스텀 스킬 (슬래시 명령어)
 

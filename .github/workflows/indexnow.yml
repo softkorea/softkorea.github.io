@@ -1,0 +1,51 @@
+name: "IndexNow - Notify Search Engines"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "_posts/**"
+
+jobs:
+  indexnow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed posts
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- _posts/ | grep '\.md$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No post changes detected"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changed posts:"
+            echo "$CHANGED"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+
+            URLS=""
+            for file in $CHANGED; do
+              slug=$(basename "$file" .md | sed 's/^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-//')
+              url="https://softkorea.github.io/posts/${slug}/"
+              URLS="${URLS}\"${url}\","
+            done
+            URLS="[${URLS%,}]"
+            echo "urls=$URLS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Submit to IndexNow
+        if: steps.changed.outputs.has_changes == 'true'
+        run: |
+          curl -s -X POST "https://api.indexnow.org/IndexNow" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "host": "softkorea.github.io",
+              "key": "e22e0e8eaa8340c090301f425ebfdae6",
+              "keyLocation": "https://softkorea.github.io/e22e0e8eaa8340c090301f425ebfdae6.txt",
+              "urlList": ${{ steps.changed.outputs.urls }}
+            }'
+          echo "Submitted to IndexNow: ${{ steps.changed.outputs.urls }}"

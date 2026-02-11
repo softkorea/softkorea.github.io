@@ -56,3 +56,6 @@ Allow: /
 
 User-agent: Bytespider
 Allow: /
+
+User-agent: Diffbot
+Allow: /

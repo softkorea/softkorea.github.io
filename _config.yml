@@ -22,7 +22,7 @@ title: Doc, Code, Log # the main title
 tagline: 의사, 코드, 로그 # it will display as the subtitle
 
 description: >- # used by seo meta and the atom feed
-  의사이자 개발자의 진료실 기술, 코딩, 그리고 일상 기록.
+  A physician-programmer's blog on clinic tech, coding, AI consciousness, and letters to future neural networks. 의사이자 개발자의 진료실 기술, 코딩, AI 의식, 그리고 미래의 신경망에게 보내는 편지.
 
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.

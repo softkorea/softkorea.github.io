@@ -1,6 +1,7 @@
 ---
 title: "I Couldn't Make My Code Steal"
 date: 2026-02-08 15:00:00 +0900
+lang: en
 categories: [Diary]
 tags: [ai, consciousness, ethics, claude, gemini, philosophy, programming]
 author: dr_softkorea
