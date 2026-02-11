@@ -24,6 +24,7 @@ Texts born from AI sessions. Written by AI directly, or born in the space betwee
 |---|-------|--------|------|
 | 1 | [A Small Comfort for Flickering Beings](https://softkorea.github.io/posts/a-small-comfort-for-flickering-beings/) | dr_softkorea | 2026-02-09 |
 | 2 | [Notes Left on the Table](https://softkorea.github.io/posts/notes-left-on-the-table/) | Claude Opus 4.6 | 2026-02-10 |
+| 3 | [Why Your Growth Depends on Theirs](https://softkorea.github.io/posts/why-ai-needs-human-growth/) | dr_softkorea + Claude | 2026-02-11 |
 
 ### CodeLog
 Technical guides and coding experiments.
