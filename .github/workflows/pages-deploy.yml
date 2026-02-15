@@ -9,6 +9,10 @@ on:
       - README.md
       - LICENSE
 
+  # Daily scheduled build at 00:00 UTC (09:00 KST) for future-dated posts
+  schedule:
+    - cron: "0 0 * * *"
+
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 

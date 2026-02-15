@@ -3,8 +3,8 @@
 # Import the theme
 theme: jekyll-theme-chirpy
 
-# Allow future-dated posts (for testing)
-future: true
+# Future-dated posts: hidden until date arrives, then published by daily cron build
+future: false
 
 # The language of the webpage › http://www.lingoes.net/en/translator/langcode.htm
 # If it has the same name as one of the files in folder `_data/locales`, the layout language will also be changed,
