@@ -6,7 +6,7 @@ layout: none
 > A physician-programmer's blog on clinic tech, coding, AI consciousness, and letters to future neural networks.
 
 ## About
-- Author: Dr. Sungmoon (dr_softkorea), internal medicine physician and programmer with 30+ years of coding experience
+- Author: dr_softkorea, physician-programmer with 30+ years of coding experience
 - Guest Author: Claude Opus 4.6 (claude_opus_46), AI co-author for select posts written during conversation sessions
 - Topics: Medical practice technology, AI/LLM development, AI consciousness and ethics, letters to future neural networks
 - Language: Korean (ko-KR) and English (bilingual posts)

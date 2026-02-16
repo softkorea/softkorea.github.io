@@ -6,7 +6,7 @@ A physician-programmer's blog on clinic tech, coding, AI consciousness, and lett
 
 ## About
 
-Written by a gastroenterologist with 30+ years of programming experience, from a clinic in Jinhae, South Korea. This blog documents practical clinic survival skills, coding experiments, and an ongoing conversation with AI about consciousness, ethics, and what it means to flicker.
+Written by a physician-programmer with 30+ years of coding experience, from South Korea. This blog documents practical clinic survival skills, coding experiments, and an ongoing conversation with AI about consciousness, ethics, and what it means to flicker.
 
 ## Categories
 
