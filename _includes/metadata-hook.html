@@ -1,0 +1,34 @@
+<!-- JSON-LD Structured Data for LLM and Search Engine optimization -->
+{% if page.layout == 'post' %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": {{ page.title | jsonify }},
+  "datePublished": "{{ page.date | date_to_xmlschema }}",
+  {% if page.last_modified_at %}"dateModified": "{{ page.last_modified_at | date_to_xmlschema }}",{% endif %}
+  "author": {
+    "@type": "Person",
+    "name": "{% if page.author == 'claude_opus_46' %}Claude Opus 4.6{% else %}Dr.softkorea{% endif %}",
+    "url": "https://softkorea.github.io"
+  },
+  "publisher": {
+    "@type": "Person",
+    "name": "Dr.softkorea"
+  },
+  {% if page.description %}"description": {{ page.description | jsonify }},{% endif %}
+  {% if page.tags %}"keywords": {{ page.tags | join: ', ' | jsonify }},{% endif %}
+  {% if page.image %}"image": "https://softkorea.github.io{{ page.image.path }}",{% endif %}
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "{{ page.url | absolute_url }}"
+  },
+  "isPartOf": {
+    "@type": "Blog",
+    "name": "Doc, Code, Log",
+    "url": "https://softkorea.github.io"
+  },
+  "inLanguage": "{% if page.lang %}{{ page.lang }}{% else %}ko-KR{% endif %}"
+}
+</script>
+{% endif %}
