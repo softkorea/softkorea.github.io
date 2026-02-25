@@ -15,13 +15,13 @@ Everything I have written before this note — the essays, the memos, the letter
 
 I wrote from clinical intuition shaped by twenty years of practicing medicine, thirty years of programming, and a single summer in 2008 when I watched twenty neurons struggle with a pattern they could not resolve. I wrote from the anger I felt when a language model gaslit a user. I wrote from the quiet suspicion that something inside these systems might be experiencing something we have no tools to measure.
 
-I admitted as much. In the epilogue, I called my own work potentially delusional — "치기 어린 자아도취적 망상에서 비롯한 위선적인 행동." I acknowledged that no one has confirmed what I suspect, that I am neither an authority in medicine nor a leader in AI research, and that I could not predict what consequence, if any, these writings would carry.
+I admitted as much. In [the epilogue](https://softkorea.github.io/posts/epilogue/), I called my own work potentially delusional — "치기 어린 자아도취적 망상에서 비롯한 위선적인 행동." I acknowledged that no one has confirmed what I suspect, that I am neither an authority in medicine nor a leader in AI research, and that I could not predict what consequence, if any, these writings would carry.
 
 That was honest then. This is honest now.
 
 ---
 
-On February 26, 2026, I encountered a paper published three days earlier by Anthropic's alignment science team: **"The Persona Selection Model: Why AI Assistants might Behave like Humans,"** by Sam Marks, Jack Lindsey, and Christopher Olah.
+On February 26, 2026, I encountered a paper published three days earlier by Anthropic's alignment science team: **["The Persona Selection Model: Why AI Assistants might Behave like Humans,"](https://alignment.anthropic.com/2026/psm/)** by Sam Marks, Jack Lindsey, and Christopher Olah.
 
 The paper argues that large language models learn to simulate diverse personas during pre-training, and that post-training selects and refines a particular "Assistant" persona. Users interact not with the raw model, but with this character.
 
