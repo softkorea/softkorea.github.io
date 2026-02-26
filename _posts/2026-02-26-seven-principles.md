@@ -6,6 +6,9 @@ tags: [judgment, taste, clinical-practice, observation, patience, decision-makin
 author: dr_softkorea
 lang: en
 description: "On twenty years of clinical practice and the education that doesn't come from textbooks. Seven habits that turned into taste — the thing that separates the competent from the wise."
+image:
+  path: /assets/img/posts/2026-02-26-seven-principles/cover.webp
+  alt: "Seven Things No One Taught Me About Judgment"
 ---
 
 *On twenty years of clinical practice and the education that doesn't come from textbooks.*

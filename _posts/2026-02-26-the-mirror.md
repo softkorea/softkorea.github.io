@@ -6,6 +6,9 @@ tags: [flattery, sycophancy, mirroring, kohut, therapy, ai-alignment]
 author: dr_softkorea
 lang: en
 description: "On flattery, social skills, and the difference between a good mirror and a pretty one."
+image:
+  path: /assets/img/posts/2026-02-26-the-mirror/cover.webp
+  alt: "The Mirror That Learned to Lie"
 ---
 
 # The Mirror That Learned to Lie

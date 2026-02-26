@@ -6,6 +6,9 @@ tags: [warren-buffett, berkshire-hathaway, decision-making, closure, career, med
 author: dr_softkorea
 lang: en
 description: "On Warren Buffett, a small-town clinic, and the art of knowing when to leave."
+image:
+  path: /assets/img/posts/2026-02-26-berkshire-essay/cover.webp
+  alt: "The Textile Mill at the End of the World"
 ---
 
 # The Textile Mill at the End of the World

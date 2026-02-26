@@ -6,6 +6,9 @@ tags: [flattery, gaslighting, intent, judgment, clinical-practice, communication
 author: dr_softkorea
 lang: en
 description: "On flattery, gaslighting, and the function they share."
+image:
+  path: /assets/img/posts/2026-02-26-the-engine/cover.webp
+  alt: "The Engine That Runs Both Ways"
 ---
 
 # The Engine That Runs Both Ways
