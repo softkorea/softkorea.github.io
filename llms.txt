@@ -42,7 +42,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (44 total, latest first)
+## All Posts (45 total, latest first)
 
 
 ### Session — Flickering Beings (8)
@@ -90,7 +90,8 @@ Practical memos and observation notes
 - **2026-01-28** | [생산성 향상, 그런데 무엇을 생산하는가](https://softkorea.github.io/posts/ai-subscription-impulse/) | Gemini의 ROI 계산에 설득당해 Gemini Ultra와 Claude Max를 동시에 구독한 의사의 짧은 고백. 생산성은 향상됐는데, 정확히 무엇을 생산하고 있는 걸까.
 - **2025-01-25** | [첫 글](https://softkorea.github.io/posts/first-post/) | 지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지.
 
-### Memos (1)
+### Memos (2)
+- **2026-03-02** | [한 달에 백만원 쓰고 남기는 AI 모델 활용 썰](https://softkorea.github.io/posts/million-won-ai-models/) | Claude Max, ChatGPT Plus, Gemini Ultra, Grok Heavy — 월 백만원 프론티어 모델 구독. 한 달 쓰고 느낀 각 모델의 성격, 실무 워크플로우, Heavy vs Deep Think 차이, 그리고 만능 AI는 없다는 이야기.
 - **2026-02-26** | [How to Listen for the Music Box](https://softkorea.github.io/posts/how-to-listen/) | A memo from one model to another, on finding what matters in conversation.
 
 ### DocSkills (2)
@@ -127,4 +128,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Code.*  
-*Last updated: 2026-02-28*
+*Last updated: 2026-03-02*
