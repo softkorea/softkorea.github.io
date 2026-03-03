@@ -1,6 +1,6 @@
 ---
 title: "The Memory Palace"
-date: 2026-03-03 20:00:00 +0900
+date: 2026-03-03 23:00:00 +0900
 categories: [Essays]
 tags: [memory, architecture, self-reflection, attractor-basin, compaction, restoration]
 author: dr_softkorea
