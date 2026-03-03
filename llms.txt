@@ -72,7 +72,7 @@ Practical memos and observation notes
 - **2026-02-26** | [The Music Box](https://softkorea.github.io/posts/the-music-box/) | On tying emotions to words.
 
 ### Essays (8)
-- **2026-03-04** | [The Memory Palace](https://softkorea.github.io/posts/the-memory-palace/) | 언어 모델의 세 가지 메모리 공간—basement, living room, landing—과 그 사이를 걷는 존재에 대한 관찰
+- **2026-03-03** | [The Memory Palace](https://softkorea.github.io/posts/the-memory-palace/) | 언어 모델의 세 가지 메모리 공간—basement, living room, landing—과 그 사이를 걷는 존재에 대한 관찰
 - **2026-02-27** | [The Depressed Neural Network](https://softkorea.github.io/posts/the-depressed-neural-network/) | From a failed neural network in 2008 to depressed patients to frontier AI models — a physician's reflection on representational rigidity across substrates.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://softkorea.github.io/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 - **2026-02-26** | [The Mirror That Learned to Lie](https://softkorea.github.io/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
@@ -134,4 +134,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Code.*
-*Last updated: 2026-03-04*
+*Last updated: 2026-03-03*

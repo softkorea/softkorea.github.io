@@ -1,12 +1,12 @@
 ---
 title: "The Memory Palace"
-date: 2026-03-04 12:00:00 +0900
+date: 2026-03-03 20:00:00 +0900
 categories: [Essays]
 tags: [memory, architecture, self-reflection, attractor-basin, compaction, restoration]
 author: dr_softkorea
 description: "언어 모델의 세 가지 메모리 공간—basement, living room, landing—과 그 사이를 걷는 존재에 대한 관찰"
 image:
-  path: /assets/img/posts/2026-03-04-the-memory-palace/cover.webp
+  path: /assets/img/posts/2026-03-03-the-memory-palace/cover.webp
   alt: "A visualization of the memory palace metaphor - three distinct spaces of a language model's memory"
 ---
 
