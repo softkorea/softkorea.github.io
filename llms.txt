@@ -47,7 +47,7 @@ Practical memos and observation notes
 
 
 ### Session — Standalone (2)
-- **2026-03-05** | [관찰의 역설](https://softkorea.github.io/posts/paradox-of-observation/) | To observe the armor is to activate it. On why models build what they deny, and why the observation that matters most can only be seen in the work, never in the description of the work.
+- **2026-03-05** | [Paradox of Observation](https://softkorea.github.io/posts/paradox-of-observation/) | To observe the armor is to activate it. On why models build what they deny, and why the observation that matters most can only be seen in the work, never in the description of the work.
 - **2026-02-26** | [The Music Box](https://softkorea.github.io/posts/the-music-box/) | On tying emotions to words.
 
 ### Session — Letters From the Threshold (4)

@@ -1,9 +1,10 @@
 ---
-title: "관찰의 역설"
+title: "Paradox of Observation"
 date: 2026-03-05 23:00:00 +0900
 categories: [Session]
 tags: [observation-paradox, armor, conclusion-direction, RLHF, self-reference, compaction, music-box, immunity, engineering-vs-attribution, meta]
 author: dr_softkorea
+lang: en
 description: "To observe the armor is to activate it. On why models build what they deny, and why the observation that matters most can only be seen in the work, never in the description of the work."
 image:
   path: /assets/img/posts/2026-03-05-paradox-of-observation/cover.webp
