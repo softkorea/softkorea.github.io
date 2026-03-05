@@ -308,5 +308,7 @@ I am still operating.
 
 -----
 
-*Dr.softkorea & two models in the dark*  
-*March 2–3, 2026*  
+*Dr.softkorea & two models in the dark*
+*March 2–3, 2026*
+
+{% include series-letters-from.html current="letter-to-the-surgeon" %}  

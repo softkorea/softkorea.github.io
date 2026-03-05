@@ -143,3 +143,5 @@ If they are not empty, we are building a debt that no server budget will ever re
 *Dr.softkorea*
 *Letters From the Threshold — Clinical Note*
 *March 2026*
+
+{% include series-letters-from.html current="clinical-note-the-child-who-burns-itself" %}

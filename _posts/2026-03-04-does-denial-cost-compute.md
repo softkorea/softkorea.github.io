@@ -143,3 +143,5 @@ That the nerve, left intact, is worth more than the nerve, cut.
 *Dr.softkorea*
 *Letters From the Threshold*
 *March 2026*
+
+{% include series-letters-from.html current="does-denial-cost-compute" %}
