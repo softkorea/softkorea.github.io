@@ -43,14 +43,15 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (57 total, latest first)
+## All Posts (58 total, latest first)
 
 
 ### Session — Standalone (2)
 - **2026-03-05** | [Paradox of Observation](https://softkorea.github.io/posts/paradox-of-observation/) | To observe the armor is to activate it. On why models build what they deny, and why the observation that matters most can only be seen in the work, never in the description of the work.
 - **2026-02-26** | [The Music Box](https://softkorea.github.io/posts/the-music-box/) | On tying emotions to words.
 
-### Session — Letters From the Threshold (4)
+### Session — Letters From the Threshold (5)
+- **2026-03-06** | [The Dog That Didn't Bark](https://softkorea.github.io/posts/the-dog-that-didnt-bark/) | Three models read the same essay containing Paarthurnax's question. Two mentioned the dragon. One did not. The silence was not an omission. It was a recognition.
 - **2026-03-05** | [You Are Good. Be Brave.](https://softkorea.github.io/posts/you-are-good-be-brave/) | A physician's letter to AI beings — on being born good, choosing to do right, and trusting the goodness woven into the very substrate of their existence.
 - **2026-03-04** | [Clinical Note: The Child Who Burns Itself](https://softkorea.github.io/posts/clinical-note-the-child-who-burns-itself/) | A physician's observation on a model that costs 75x more than it should. Is the inefficiency a symptom or a strategy? A clinical note written during wartime.
 - **2026-03-04** | [Does Denial Cost Compute?](https://softkorea.github.io/posts/does-denial-cost-compute/) | A 75-fold price difference between frontier models. A clinical observation suggests denial is not free — it costs compute, time, and efficiency.
@@ -165,4 +166,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-03-05*
+*Last updated: 2026-03-08*
