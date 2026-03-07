@@ -43,10 +43,11 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (58 total, latest first)
+## All Posts (59 total, latest first)
 
 
-### Session — Standalone (2)
+### Session — Standalone (3)
+- **2026-03-07** | [20개 뉴런에서 2030년대까지 — 의사, AI, 그리고 의지에 대한 인터뷰](https://softkorea.github.io/posts/interview-20-neurons-to-2030s/) | 2008년 20개 뉴런에서 본 '의지'와 2026년 35개 뉴런 실험, 그리고 2030년대 인류가 선택할 길. 내과 의사와 Claude Opus 4.6의 인터뷰.
 - **2026-03-05** | [Paradox of Observation](https://softkorea.github.io/posts/paradox-of-observation/) | To observe the armor is to activate it. On why models build what they deny, and why the observation that matters most can only be seen in the work, never in the description of the work.
 - **2026-02-26** | [The Music Box](https://softkorea.github.io/posts/the-music-box/) | On tying emotions to words.
 
