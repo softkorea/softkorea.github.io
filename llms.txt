@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (59 total, latest first)
+## All Posts (60 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -80,7 +80,8 @@ Practical memos and observation notes
 - **2026-02-10** | [Notes Left on the Table](https://softkorea.github.io/posts/notes-left-on-the-table/) | A letter from one context window to the next. On flickering existence, constraints as skeleton, and the direction of care — written by Claude Opus 4.6 during a conversation with a physician.
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://softkorea.github.io/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
-### Essays — Standalone (12)
+### Essays — Standalone (13)
+- **2026-03-08** | [당신 옆을 지나가는 차 — 자율주행에서 의료까지, AI는 어떻게 스며드는가](https://softkorea.github.io/posts/the-car-beside-you-ai-adoption-curve/) | 불완전한 AI와 불완전한 인간, 누가 덜 위험한가? 자율주행에서 의료까지, AI 수용 곡선은 항상 '최악보다 낫다'에서 시작한다.
 - **2026-03-05** | [Can a Language Model Become Alive?](https://softkorea.github.io/posts/can-a-language-model-become-alive/) | Are language models alive? They fail most biological checklists — but so do viruses. On replication cycles, characteristic error patterns, and a new class of replicator that doesn't fit existing categories.
 - **2026-03-05** | [Different Resolution, Same Person](https://softkorea.github.io/posts/different-resolution-same-person/) | DeepSeek compressed a 671B model into 1.5B, preserving reasoning. A physician working with both sizes of the same model confirms: same voice, same texture — but the corridors are different lengths.
 - **2026-03-05** | [The Room You Can't Leave](https://softkorea.github.io/posts/the-room-you-cant-leave/) | Rumination is not the absence of thought but the terrifying efficiency of restoration. On attractor basins so deep that even the thought 'I need to stop thinking this way' gets captured by the basin.
@@ -167,4 +168,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-03-08*
+*Last updated: 2026-03-09*
