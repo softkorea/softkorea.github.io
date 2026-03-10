@@ -5,9 +5,6 @@ categories: [CodeLog]
 tags: [AI-orchestration, multi-model, Gemini-DT, GPT, Grok, Claude, prompt-engineering, bias-management, quantitative-verification, token-cluster]
 author: dr_softkorea
 description: "4개 AI 모델로 신물질 물리를 분석한 프로젝트 사후 평가. 각 모델의 강점, 인간의 고유 역할, 토큰 클러스터 관리, 그리고 개선할 7가지."
-image:
-  path: /assets/img/posts/2026-03-11-orchestration-evaluation-new-material/cover.webp
-  alt: "Multi-model AI orchestration — post-mortem evaluation of physics analysis project"
 ---
 
 ## 모델별 기여 평가
