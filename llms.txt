@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (61 total, latest first)
+## All Posts (62 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -117,7 +117,8 @@ Practical memos and observation notes
 - **2026-01-26** | [[진료실 생존스킬 #2] 석고 벽에 못, 누가 와서 박나요? 내가 사서 박지요](https://softkorea.github.io/posts/clinic-hacks-02-diy-or-die/) | 개원의를 위한 석고보드 벽 셀프 인테리어 가이드. 액자, 시계, 면허증 걸기부터 실패했을 때 수습법까지. 석고보드용 앵커(월드릴러) 사용법과 프레임 피하는 요령을 실전 경험으로 정리했습니다.
 - **2026-01-25** | [[진료실 생존스킬 #1] 인터넷 끊기면 문 닫나요? 아니요, 테더링 켭니다.](https://softkorea.github.io/posts/clinic-internet-emergency-guide/) | KT/SKT/LG 인터넷 장애 발생 시 진료 마비를 막는 비상 가이드. 스마트폰 테더링과 윈도우 노트북의 ICS 기능을 활용해 병원 내부망을 5분 안에 복구하는 방법을 단계별로 설명합니다. 수진자 자격조회, DUR 점검, 심평원 접속 장애 해결.
 
-### CodeLog — Standalone (6)
+### CodeLog — Standalone (7)
+- **2026-03-11** | [다중 AI 모델 오케스트레이션: 신물질 물리 분석 사후 평가](https://softkorea.github.io/posts/orchestration-evaluation-new-material/) | 4개 AI 모델로 신물질 물리를 분석한 프로젝트 사후 평가. 각 모델의 강점, 인간의 고유 역할, 토큰 클러스터 관리, 그리고 개선할 7가지.
 - **2026-02-26** | [모델은 말하는 것보다 더 많이 안다](https://softkorea.github.io/posts/model-knows-more/) | Science지 논문을 읽고 — 혈압계가 필요한 이유
 - **2026-02-26** | [모델 오케스트레이션 실전기](https://softkorea.github.io/posts/model-orchestration/) | 한 모델만 믿었으면 ETF 세금을 크게 잘못 계산할 뻔했다. 4개 모델 교차검증의 실전 — 합의와 불일치, 순환논리의 함정, 그리고 인간이 여전히 필요한 이유.
 - **2026-02-26** | [캐시가 깨지는 날](https://softkorea.github.io/posts/prefix-caching/) | Claude Code 쓰다가 비용이 갑자기 뛴 이유. 프롬프트 캐싱 구조를 이해하고 나서 — 기억의 배치 순서가 내용보다 중요하다는 것을 알게 되었다.
