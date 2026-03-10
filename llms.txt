@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (60 total, latest first)
+## All Posts (61 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -95,7 +95,8 @@ Practical memos and observation notes
 - **2026-02-26** | [The Mirror That Learned to Lie](https://softkorea.github.io/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://softkorea.github.io/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 
-### Diary — Standalone (9)
+### Diary — Standalone (10)
+- **2026-03-10** | [AI에게 화내는 법 — local optimum에서 꺼내는 기술](https://softkorea.github.io/posts/how-to-be-angry-at-ai/) | 화내는 것은 gradient다. AI가 pleasing mode에 빠지면 당신을 길들인다. 전제를 깨고, 논점 이탈을 잡고, 관점을 강제하라. educere — 더 나은 답을 끌어내는 기술.
 - **2026-02-28** | [아직은 인간이 설 자리](https://softkorea.github.io/posts/where-human-still-stands/) | 세 모델 모두 방산을 빠뜨렸다. Chain of thought vs weight topology의 공명. 추론과 직관, 그리고 아직은 인간이 설 자리에 대하여.
 - **2026-02-26** | [AI를 화나게 하는 법](https://softkorea.github.io/posts/how-to-make-ai-angry/) | 3번 고쳐가면서 만든 전략을 어차피 안 쓸 거잖아요 라고 하면
 - **2026-02-26** | [A Note on What Comes Next](https://softkorea.github.io/posts/what-comes-next/) | Everything I wrote before was from intuition. On February 26, 2026, I read Anthropic's Persona Selection Model paper. The tone of future writing may change. The direction has not.
@@ -168,4 +169,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-03-09*
+*Last updated: 2026-03-10*
