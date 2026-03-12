@@ -228,7 +228,7 @@ def generate_og_image(path, avatar_path, w=1200, h=630):
     url_font = ImageFont.truetype(CONSOLAS, 22)
     draw.text(
         (text_x, 420),
-        "softkorea.github.io",
+        "drsoftkorea.com",
         fill=ACCENT_TEAL,
         font=url_font,
     )

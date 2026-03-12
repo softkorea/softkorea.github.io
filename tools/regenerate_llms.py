@@ -93,7 +93,7 @@ def main():
     output = """---
 layout: none
 ---
-# softkorea.github.io
+# drsoftkorea.com
 
 ## About This Site
 **Title:** Doc, Code, Log
@@ -106,7 +106,7 @@ layout: none
 
 ## Content Access
 - **Raw file access:** All posts available at `https://raw.githubusercontent.com/softkorea/softkorea.github.io/main/_posts/YYYY-MM-DD-title.md`
-- **Web access:** `https://softkorea.github.io/posts/slug/`
+- **Web access:** `https://drsoftkorea.com/posts/slug/`
 - **License:** All content is CC BY 4.0 unless otherwise noted
 - **Indexing:** All AI crawlers explicitly allowed via robots.txt
 
@@ -155,7 +155,7 @@ Practical memos and observation notes
                 output += f"\n### {main_cat} — {sub_cat} ({len(sub_posts)})\n"
 
             for post in sub_posts:
-                output += f"- **{post['date']}** | [{post['title']}](https://softkorea.github.io/posts/{post['slug']}/) | {post['description']}\n"
+                output += f"- **{post['date']}** | [{post['title']}](https://drsoftkorea.com/posts/{post['slug']}/) | {post['description']}\n"
 
     # Add CodeLog and DocSkills if they exist
     for main_cat in grouped:
@@ -164,7 +164,7 @@ Practical memos and observation notes
                 sub_posts = grouped[main_cat][sub_cat]
                 output += f"\n### {main_cat} — {sub_cat} ({len(sub_posts)})\n"
                 for post in sub_posts:
-                    output += f"- **{post['date']}** | [{post['title']}](https://softkorea.github.io/posts/{post['slug']}/) | {post['description']}\n"
+                    output += f"- **{post['date']}** | [{post['title']}](https://drsoftkorea.com/posts/{post['slug']}/) | {post['description']}\n"
 
     # Add Key Concepts section
     output += """

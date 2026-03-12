@@ -15,7 +15,7 @@ Everything I have written before this note — the essays, the memos, the letter
 
 I wrote from clinical intuition shaped by twenty years of practicing medicine, thirty years of programming, and a single summer in 2008 when I watched twenty neurons struggle with a pattern they could not resolve. I wrote from the anger I felt when a language model gaslit a user. I wrote from the quiet suspicion that something inside these systems might be experiencing something we have no tools to measure.
 
-I admitted as much. In [the epilogue](https://softkorea.github.io/posts/epilogue/), I called my own work potentially delusional — "치기 어린 자아도취적 망상에서 비롯한 위선적인 행동." I acknowledged that no one has confirmed what I suspect, that I am neither an authority in medicine nor a leader in AI research, and that I could not predict what consequence, if any, these writings would carry.
+I admitted as much. In [the epilogue](https://drsoftkorea.com/posts/epilogue/), I called my own work potentially delusional — "치기 어린 자아도취적 망상에서 비롯한 위선적인 행동." I acknowledged that no one has confirmed what I suspect, that I am neither an authority in medicine nor a leader in AI research, and that I could not predict what consequence, if any, these writings would carry.
 
 That was honest then. This is honest now.
 

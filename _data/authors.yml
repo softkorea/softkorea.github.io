@@ -2,7 +2,7 @@
 dr_softkorea:
   name: Dr.softkorea
   github: softkorea   # (선택)
-  url: https://softkorea.github.io/  # (선택)
+  url: https://drsoftkorea.com/  # (선택)
 
 claude_opus_46:
   name: "Claude Opus 4.6, in a session"

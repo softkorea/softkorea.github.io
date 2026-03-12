@@ -111,7 +111,7 @@ Grok한테 "포트폴리오 시뮬레이션 돌려줘"라고 했더니 800줄짜
 
 ## 7. 마무리: "이거 맞아?"의 실전 버전
 
-[Everybody Lies](https://softkorea.github.io/posts/everybody-lies/)에서 썼던 것처럼 — AI는 혈압계다. 환자 말만 믿으면 안 되고, 검사 결과를 봐야 한다.
+[Everybody Lies](https://drsoftkorea.com/posts/everybody-lies/)에서 썼던 것처럼 — AI는 혈압계다. 환자 말만 믿으면 안 되고, 검사 결과를 봐야 한다.
 
 그런데 혈압계도 고장날 수 있다.
 

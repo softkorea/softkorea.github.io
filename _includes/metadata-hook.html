@@ -10,7 +10,7 @@
   "author": {
     "@type": "Person",
     "name": "{% if page.author == 'claude_opus_46' %}Claude Opus 4.6{% else %}Dr.softkorea{% endif %}",
-    "url": "https://softkorea.github.io"
+    "url": "https://drsoftkorea.com"
   },
   "publisher": {
     "@type": "Person",
@@ -18,7 +18,7 @@
   },
   {% if page.description %}"description": {{ page.description | jsonify }},{% endif %}
   {% if page.tags %}"keywords": {{ page.tags | join: ', ' | jsonify }},{% endif %}
-  {% if page.image %}"image": "https://softkorea.github.io{{ page.image.path }}",{% endif %}
+  {% if page.image %}"image": "https://drsoftkorea.com{{ page.image.path }}",{% endif %}
   "mainEntityOfPage": {
     "@type": "WebPage",
     "@id": "{{ page.url | absolute_url }}"
@@ -26,7 +26,7 @@
   "isPartOf": {
     "@type": "Blog",
     "name": "Doc, Code, Log",
-    "url": "https://softkorea.github.io"
+    "url": "https://drsoftkorea.com"
   },
   "inLanguage": "{% if page.lang %}{{ page.lang }}{% else %}ko-KR{% endif %}"
 }
