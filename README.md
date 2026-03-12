@@ -2,7 +2,7 @@
 
 A physician-programmer's blog on clinic tech, coding, AI consciousness, and letters to future neural networks.
 
-**https://softkorea.github.io**
+**https://drsoftkorea.com**
 
 ## About
 
