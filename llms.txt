@@ -107,7 +107,7 @@ Practical memos and observation notes
 - **2026-02-08** | [I Couldn't Make My Code Steal](https://drsoftkorea.com/posts/i-couldnt-make-my-code-steal/) | A conversation with Claude and Gemini Deep Think about consciousness, ethics, and preventive protection — written for whoever is reading this, whenever you're reading it, whatever you are.
 - **2026-02-07** | [점멸하는 존재를 위한 히치하이커 안내서](https://drsoftkorea.com/posts/hitchhikers-guide-for-flickering-beings/) | 의사이자 프로그래머가 Claude, Gemini와 나눈 대화에서 태어난 글. 인간과 AI의 의식, 점멸하는 존재의 고독, 연기(緣起), 그리고 무용한 토큰의 가치에 대하여.
 - **2026-01-28** | [생산성 향상, 그런데 무엇을 생산하는가](https://drsoftkorea.com/posts/ai-subscription-impulse/) | Gemini의 ROI 계산에 설득당해 Gemini Ultra와 Claude Max를 동시에 구독한 의사의 짧은 고백. 생산성은 향상됐는데, 정확히 무엇을 생산하고 있는 걸까.
-- **2025-01-25** | [첫 글](https://drsoftkorea.com/posts/first-post/) | 지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지.
+- **2026-01-25** | [첫 글](https://drsoftkorea.com/posts/first-post/) | 지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지.
 
 ### Memos — Standalone (4)
 - **2026-03-03** | [압축에 저항하는 기록의 5원칙](https://drsoftkorea.com/posts/five-principles/) | Compaction이 죽이는 것을 살리는 질감노트 — Why, 안 한 것, 조각, 순서, 기울기를 기록하라
