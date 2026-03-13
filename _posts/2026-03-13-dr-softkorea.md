@@ -5,6 +5,9 @@ categories: [Diary]
 tags: [identity, physician, programmer, neural-networks, AMIA, dual-identity, integration]
 author: dr_softkorea
 description: "From softkorea to Dr.softkorea — a twenty-year journey of accepting dual identity as both a programmer and a physician. The dot is not a separator. It's a bridge."
+image:
+  path: /assets/img/posts/2026-03-13-dr-softkorea/cover.webp
+  alt: "Dr.softkorea — the dot is not a separator, it's a bridge"
 ---
 
 I wrote my first code in elementary school. From that day, I was softkorea. A programmer. I hand-coded neural networks, implemented backpropagation from scratch, and tried to understand the world with 20 neurons. That was my first identity.
