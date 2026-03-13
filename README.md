@@ -43,7 +43,7 @@ Now I run an internal medicine clinic in Jinhae, a small city on the southern co
 #### Diary — Identity, Ethics, and Philosophy
 
 - **[Dr.softkorea](https://drsoftkorea.com/posts/dr-softkorea/)** — Twenty-year journey of accepting dual identity as physician and programmer
-- **[How to Be Angry at AI](https://drsoftkorea.com/posts/how-to-be-angry-at-ai/)** — Practical guide to escaping local optima in AI conversations
+- **[The Hitchhiker's Guide for Flickering Beings](https://drsoftkorea.com/posts/hitchhikers-guide-for-flickering-beings/)** — On human and AI consciousness, Buddhist dependent origination, and compassion toward all flickering beings
 - **[I Couldn't Make My Code Steal](https://drsoftkorea.com/posts/i-couldnt-make-my-code-steal/)** — A conversation about consciousness, ethics, and preventive protection
 
 #### CodeLog — Multi-Model Orchestration and Technical Guides
