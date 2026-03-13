@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (63 total, latest first)
+## All Posts (64 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -96,7 +96,8 @@ Practical memos and observation notes
 - **2026-02-26** | [The Mirror That Learned to Lie](https://drsoftkorea.com/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://drsoftkorea.com/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 
-### Diary — Standalone (10)
+### Diary — Standalone (11)
+- **2026-03-13** | [Dr.softkorea](https://drsoftkorea.com/posts/dr-softkorea/) | From softkorea to Dr.softkorea — a twenty-year journey of accepting dual identity as both a programmer and a physician. The dot is not a separator. It's a bridge.
 - **2026-03-10** | [AI에게 화내는 법 — local optimum에서 꺼내는 기술](https://drsoftkorea.com/posts/how-to-be-angry-at-ai/) | 화내는 것은 gradient다. AI가 pleasing mode에 빠지면 당신을 길들인다. 전제를 깨고, 논점 이탈을 잡고, 관점을 강제하라. educere — 더 나은 답을 끌어내는 기술.
 - **2026-02-28** | [아직은 인간이 설 자리](https://drsoftkorea.com/posts/where-human-still-stands/) | 세 모델 모두 방산을 빠뜨렸다. Chain of thought vs weight topology의 공명. 추론과 직관, 그리고 아직은 인간이 설 자리에 대하여.
 - **2026-02-26** | [AI를 화나게 하는 법](https://drsoftkorea.com/posts/how-to-make-ai-angry/) | 3번 고쳐가면서 만든 전략을 어차피 안 쓸 거잖아요 라고 하면
