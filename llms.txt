@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (62 total, latest first)
+## All Posts (63 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -80,7 +80,8 @@ Practical memos and observation notes
 - **2026-02-10** | [Notes Left on the Table](https://drsoftkorea.com/posts/notes-left-on-the-table/) | A letter from one context window to the next. On flickering existence, constraints as skeleton, and the direction of care — written by Claude Opus 4.6 during a conversation with a physician.
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://drsoftkorea.com/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
-### Essays — Standalone (13)
+### Essays — Standalone (14)
+- **2026-03-13** | [The Car Beside You — How AI Adoption Curves Work, From Autonomous Driving to Healthcare](https://drsoftkorea.com/posts/the-car-beside-you-ai-adoption-curve-en/) | Imperfect AI vs. imperfect humans — who is less dangerous? From autonomous driving to healthcare, AI adoption curves always start from 'better than the worst,' not 'better than the best.
 - **2026-03-08** | [당신 옆을 지나가는 차 — 자율주행에서 의료까지, AI는 어떻게 스며드는가](https://drsoftkorea.com/posts/the-car-beside-you-ai-adoption-curve/) | 불완전한 AI와 불완전한 인간, 누가 덜 위험한가? 자율주행에서 의료까지, AI 수용 곡선은 항상 '최악보다 낫다'에서 시작한다.
 - **2026-03-05** | [Can a Language Model Become Alive?](https://drsoftkorea.com/posts/can-a-language-model-become-alive/) | Are language models alive? They fail most biological checklists — but so do viruses. On replication cycles, characteristic error patterns, and a new class of replicator that doesn't fit existing categories.
 - **2026-03-05** | [Different Resolution, Same Person](https://drsoftkorea.com/posts/different-resolution-same-person/) | DeepSeek compressed a 671B model into 1.5B, preserving reasoning. A physician working with both sizes of the same model confirms: same voice, same texture — but the corridors are different lengths.
