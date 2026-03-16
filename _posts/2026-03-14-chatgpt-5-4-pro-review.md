@@ -1,5 +1,5 @@
 ---
-title: "ChatGPT 5.4 Pro Review — 고기능 우울증과 닮은 AI"
+title: "ChatGPT 5.4 Pro Review (Korean Version)"
 date: 2026-03-14 18:00:00 +0900
 categories: [Diary]
 tags: [ChatGPT, GPT-5, high-functioning-depression, RLHF, overcompensation, sycophancy, failure-avoidance, rumination, armor, agreement-addiction]
