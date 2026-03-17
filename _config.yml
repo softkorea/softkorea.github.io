@@ -1,8 +1,7 @@
 # The Site Configuration
 
 # Import the theme
-# theme: jekyll-theme-chirpy
-# Note: Theme is loaded from Gemfile instead to prevent GitHub Pages auto-build
+theme: jekyll-theme-chirpy
 
 # Future-dated posts: hidden until date arrives, then published by daily cron build
 future: true
