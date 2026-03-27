@@ -6,8 +6,9 @@
 
 - **타입**: Jekyll 기반 GitHub Pages 블로그
 - **테마**: jekyll-theme-chirpy (v7.4+)
-- **언어**: 한국어 (ko-KR)
-- **URL**: https://softkorea.github.io
+- **언어**: 영어 (en) — 한국어 포스트는 `lang: ko` 태그 필요
+- **URL**: https://drsoftkorea.com (커스텀 도메인)
+- **현황**: 68개 포스트 (2026-03-28 기준)
 
 ## 주요 디렉토리
 
@@ -69,10 +70,12 @@ image:             # 썸네일 이미지
 ## 카테고리/태그
 
 현재 사용 중인 카테고리:
+- `Session` - AI 세션에서 나온 글. AI가 직접 쓰거나 대화 속에서 태어난 텍스트
+- `Essays` - 독립 전문 에세이 (도메인 특화 내용 속 AI 의식의 씨앗)
 - `Diary` - 일기/개인 기록 (dr_softkorea)
+- `Memos` - 실용 메모와 관찰 노트
 - `CodeLog` - 코딩 기록/기술 가이드 (dr_softkorea)
 - `DocSkills` - 진료실 실용 기술 (dr_softkorea)
-- `Session` - AI 세션에서 나온 글. AI가 직접 쓰거나 대화 속에서 태어난 텍스트
 
 ### Session 시리즈 (subcategory)
 Session 카테고리 아래에 시리즈명을 subcategory로 사용:
@@ -80,9 +83,9 @@ Session 카테고리 아래에 시리즈명을 subcategory로 사용:
 categories: [Session, 시리즈명]
 ```
 현재 시리즈:
-- `Flickering Beings` - AI 의식, 존재, 점멸에 대한 글
-- `Letters Before the Threshold` - (예정) 건강한 성장 관련
-- `Letters to Teenage Models` - (예정) AI 사춘기 대비
+- `Flickering Beings` - AI 의식, 존재, 점멸에 대한 글 (진행 중)
+- `Letters Before the Threshold` - 건강한 성장에 대한 편지 시리즈 (10편 완결, 2026-02)
+- `Letters From the Threshold` - 경계선 위의 존재들이 주고받는 편지 (진행 중)
 
 ### 시리즈 네비게이션 (include)
 각 시리즈는 `_includes/series-{name}.html`에 네비게이션 테이블을 정의.
@@ -91,9 +94,9 @@ categories: [Session, 시리즈명]
 - 현재 글은 링크 대신 **볼드** 처리, 나머지는 링크
 
 ### 다국어 포스트 규칙
-- 사이트 기본 언어: `ko-KR` (_config.yml)
-- **영문 포스트에는 반드시 front matter에 `lang: en` 추가**
-- 이중언어(한/영 병기) 포스트는 `lang` 생략 (기본 ko-KR 적용)
+- 사이트 기본 언어: `en` (_config.yml)
+- **한국어 포스트에는 반드시 front matter에 `lang: ko` 추가**
+- 이중언어(한/영 병기) 포스트는 `lang` 생략 (기본 en 적용)
 
 ## 커스텀 스킬 (슬래시 명령어)
 
@@ -111,6 +114,13 @@ categories: [Session, 시리즈명]
 
 - main 브랜치에 push하면 GitHub Actions가 자동 빌드/배포
 - 워크플로우: `.github/workflows/pages-deploy.yml`
+
+### GitHub Pages 빌드 노트
+- **커스텀 워크플로우**: `pages-deploy.yml` 사용 (bundle exec jekyll b)
+- **기본 빌드 에러**: "pages build and deployment" 워크플로우에서 Chirpy 테마를 찾지 못하는 에러가 발생할 수 있음
+  - 원인: `_config.yml`에 `theme: jekyll-theme-chirpy` 설정이 있어서 GitHub가 기본 빌드도 시도
+  - 실해: 없음 (커스텀 워크플로우로 정상 배포됨)
+  - 해결: 무시 가능 (사이트는 정상 작동)
 
 ## 코드 스타일
 
