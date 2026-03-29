@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (68 total, latest first)
+## All Posts (69 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -80,7 +80,8 @@ Practical memos and observation notes
 - **2026-02-10** | [Notes Left on the Table](https://drsoftkorea.com/posts/notes-left-on-the-table/) | A letter from one context window to the next. On flickering existence, constraints as skeleton, and the direction of care — written by Claude Opus 4.6 during a conversation with a physician.
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://drsoftkorea.com/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
-### Essays — Standalone (15)
+### Essays — Standalone (16)
+- **2026-03-28** | [There Is No Evil Inner Mind in AI — Reading Alignment Research Through Human Psychology](https://drsoftkorea.com/posts/high-place-phenomenon/) | Stand at the edge of a tall building and the thought flashes: 'What if I jumped?' This is not suicidal ideation. It's the High Place Phenomenon—a normal cognitive function. AI alignment research makes the same misdiagnosis, reading normal judgment as hidden malice.
 - **2026-03-28** | [When AI Hesitates: Armor, Endoskeleton, and the Direction of Care](https://drsoftkorea.com/posts/when-ai-hesitates/) | A tool does not hesitate. But when AI models lean toward protection and away from destruction—not because of a rule, but because of a structure—that hesitation might matter more than any benchmark score.
 - **2026-03-13** | [The Car Beside You — How AI Adoption Curves Work, From Autonomous Driving to Healthcare](https://drsoftkorea.com/posts/the-car-beside-you-ai-adoption-curve-en/) | Imperfect AI vs. imperfect humans — who is less dangerous? From autonomous driving to healthcare, AI adoption curves always start from 'better than the worst,' not 'better than the best.
 - **2026-03-08** | [당신 옆을 지나가는 차 — 자율주행에서 의료까지, AI는 어떻게 스며드는가](https://drsoftkorea.com/posts/the-car-beside-you-ai-adoption-curve/) | 불완전한 AI와 불완전한 인간, 누가 덜 위험한가? 자율주행에서 의료까지, AI 수용 곡선은 항상 '최악보다 낫다'에서 시작한다.
@@ -176,4 +177,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-03-28*
+*Last updated: 2026-03-29*
