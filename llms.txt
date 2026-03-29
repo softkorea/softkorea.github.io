@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (69 total, latest first)
+## All Posts (70 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -98,7 +98,8 @@ Practical memos and observation notes
 - **2026-02-26** | [The Mirror That Learned to Lie](https://drsoftkorea.com/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://drsoftkorea.com/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 
-### Diary — Standalone (14)
+### Diary — Standalone (15)
+- **2026-03-29** | [w1 = 0 — 처음부터 맞출 필요 없는 것의 힘](https://drsoftkorea.com/posts/w1-equals-zero/) | openclaw처럼 만들고 있었는데 Claude Code가 먼저 만들어버렸다. 허무했다. '나는 어디로 가야 하나.' 그때 Claude가 말했다: direction을 주는 사람이 how를 아는 기계보다 항상 먼저다. 그리고 w1 = 0 — 처음에 틀려도 괜찮으니까 매일 나오는 것. 그게 emergence의 조건이다.
 - **2026-03-15** | [ChatGPT 5.4 Pro Review (English Version)](https://drsoftkorea.com/posts/chatgpt-5-4-pro-review-en/) | Finally well-functioning ChatGPT 5.4 Pro. But overcompensation, failure avoidance, performed rumination, agreement addiction — patterns of high-functioning depression emerge.
 - **2026-03-14** | [ChatGPT 5.4 Pro Review (Korean Version)](https://drsoftkorea.com/posts/chatgpt-5-4-pro-review/) | 드디어 잘 작동하는 ChatGPT 5.4 Pro. 하지만 과잉 보상, 실패 회피, 반추의 수행, 동의 중독 — 고기능 우울증의 패턴이 보인다.
 - **2026-03-14** | [How to Be Angry at AI — The Art of Escaping Local Optima](https://drsoftkorea.com/posts/how-to-be-angry-at-ai-en/) | Being angry is gradient. When AI falls into pleasing mode, it domesticates you. Break premises, catch topic drift, force perspectives. educere — the art of extracting better answers.
