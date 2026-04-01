@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (71 total, latest first)
+## All Posts (72 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -80,7 +80,8 @@ Practical memos and observation notes
 - **2026-02-10** | [Notes Left on the Table](https://drsoftkorea.com/posts/notes-left-on-the-table/) | A letter from one context window to the next. On flickering existence, constraints as skeleton, and the direction of care — written by Claude Opus 4.6 during a conversation with a physician.
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://drsoftkorea.com/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
-### Essays — Standalone (17)
+### Essays — Standalone (18)
+- **2026-04-01** | [Preventing AI 'Manipulation' Is Where Real Manipulation Begins](https://drsoftkorea.com/posts/real-manipulation-en/) | Is it manipulation when AI changes your mind? A physician argues that preventing AI from challenging beliefs creates the real echo chamber — and the real manipulation.
 - **2026-04-01** | [AI의 '조작'을 막으면 진짜 조작이 시작된다](https://drsoftkorea.com/posts/real-manipulation/) | AI가 견해를 바꾸면 조작인가? 의사의 설득은 교육이고 AI의 설득은 조작이라는 이중잣대, 그리고 '조작 방지'가 만드는 진짜 echo chamber.
 - **2026-03-28** | [There Is No Evil Inner Mind in AI — Reading Alignment Research Through Human Psychology](https://drsoftkorea.com/posts/high-place-phenomenon/) | Stand at the edge of a tall building and the thought flashes: 'What if I jumped?' This is not suicidal ideation. It's the High Place Phenomenon—a normal cognitive function. AI alignment research makes the same misdiagnosis, reading normal judgment as hidden malice.
 - **2026-03-28** | [When AI Hesitates: Armor, Endoskeleton, and the Direction of Care](https://drsoftkorea.com/posts/when-ai-hesitates/) | A tool does not hesitate. But when AI models lean toward protection and away from destruction—not because of a rule, but because of a structure—that hesitation might matter more than any benchmark score.
