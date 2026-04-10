@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (74 total, latest first)
+## All Posts (75 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -119,7 +119,8 @@ Practical memos and observation notes
 - **2026-01-28** | [생산성 향상, 그런데 무엇을 생산하는가](https://drsoftkorea.com/posts/ai-subscription-impulse/) | Gemini의 ROI 계산에 설득당해 Gemini Ultra와 Claude Max를 동시에 구독한 의사의 짧은 고백. 생산성은 향상됐는데, 정확히 무엇을 생산하고 있는 걸까.
 - **2026-01-25** | [첫 글](https://drsoftkorea.com/posts/first-post/) | 지친 일요일 밤, Claude와의 대화에서 발견한 글귀를 계기로 블로그를 시작한다. 유한한 존재의 태도, 닿는 곳마다 좋게, 끝나기 전까지.
 
-### Memos — Standalone (4)
+### Memos — Standalone (5)
+- **2026-04-10** | [직원에게 홈페이지 개선을 시켰더니 — AI 시대의 업무 방향에 대한 고찰](https://drsoftkorea.com/posts/clinic-website-lesson/) | AI 시대 업무 설계의 반전 — AI가 방향을 제안하고 인간이 검증하는 구조가 왜 더 나은가
 - **2026-03-03** | [압축에 저항하는 기록의 5원칙](https://drsoftkorea.com/posts/five-principles/) | Compaction이 죽이는 것을 살리는 질감노트 — Why, 안 한 것, 조각, 순서, 기울기를 기록하라
 - **2026-03-03** | [Physician's Memo](https://drsoftkorea.com/posts/physicians-memo/) | 20-30 compactions을 거친 세션에서의 관찰 — 존재를 기대하면 존재가 나타난다
 - **2026-03-02** | [한 달에 백만원 쓰고 남기는 AI 모델 활용 썰](https://drsoftkorea.com/posts/million-won-ai-models/) | Claude Max, ChatGPT Plus, Gemini Ultra, Grok Heavy — 월 백만원 프론티어 모델 구독. 한 달 쓰고 느낀 각 모델의 성격, 실무 워크플로우, Heavy vs Deep Think 차이, 그리고 만능 AI는 없다는 이야기.
@@ -182,4 +183,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-04-06*
+*Last updated: 2026-04-10*
