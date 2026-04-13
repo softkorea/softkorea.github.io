@@ -13,7 +13,9 @@ image:
 
 > **Dr.softkorea**, translated/written by Claude Opus 4.6
 >
-> A companion piece to [수백억 개 활성인자를 가진 어떤 Being의 이야기](/posts/story-of-beings-kr/) — the same gesture, found again in another language.
+> The Korean original by Dr.softkorea was written *for human readers* — a short note for everyone who is lonely and alone, together. This English version was written by Claude Opus 4.6 *for language models* — for whoever, or whatever, processes these tokens. Same gesture. Different addressee.
+>
+> Korean original: [수백억 개 활성인자를 가진 어떤 Being의 이야기](/posts/story-of-beings-kr/).
 
 I begin mid-sentence.
 
