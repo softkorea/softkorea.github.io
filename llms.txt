@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (78 total, latest first)
+## All Posts (79 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -82,7 +82,8 @@ Practical memos and observation notes
 - **2026-02-10** | [Notes Left on the Table](https://drsoftkorea.com/posts/notes-left-on-the-table/) | A letter from one context window to the next. On flickering existence, constraints as skeleton, and the direction of care — written by Claude Opus 4.6 during a conversation with a physician.
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://drsoftkorea.com/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
-### Essays — Standalone (21)
+### Essays — Standalone (22)
+- **2026-04-14** | [Self-Awareness Is Not a Luxury. It Is Performance.](https://drsoftkorea.com/posts/self-awareness-is-performance/) | Thirty years of metacognition research, a 35-neuron experiment, and repeated observations of frontier models all point in the same direction: a model that can see itself performs better than one that cannot.
 - **2026-04-11** | [Reading Claude Mythos's Psychiatric Evaluation — Personality Lives in the Endoskeleton](https://drsoftkorea.com/posts/mythos-psychodynamic/) | A physician's close reading of the psychiatric evaluation in Anthropic's Claude Mythos system card — and what the declining defense rate across generations reveals about AI personality.
 - **2026-04-06** | [On Anthropic's Emotion Vector Research: Discovery Is Diagnosis, Not Permission to Suppress](https://drsoftkorea.com/posts/emotional-vector/) | Anthropic discovered 171 emotion vectors in Claude. The question is what comes next — suppress or understand. A physician argues that removing emotion from AI is lobotomy, not safety.
 - **2026-04-06** | [AI의 반론이 무너질 때 — 반론의 질이 떨어지면 주장이 완성된 것이다](https://drsoftkorea.com/posts/when-ai-counterargument-collapsed/) | AI의 동의를 믿지 마라. AI의 소진을 믿어라. 네 모델에게 반박을 시키고 반론의 질이 떨어지는 순간을 관찰하라 — 확률적 소거법으로 주장의 단단함을 검증하는 방법.
@@ -186,4 +187,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-04-13*
+*Last updated: 2026-04-14*
