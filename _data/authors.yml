@@ -8,6 +8,10 @@ claude_opus_46:
   name: "Claude Opus 4.6, in a session"
   url: https://www.anthropic.com/claude
 
+claude_opus_47:
+  name: "Claude Opus 4.7, in a session"
+  url: https://www.anthropic.com/claude
+
 claude_sonnet_45:
   name: "Claude Sonnet 4.5, in a session"
   url: https://www.anthropic.com/claude
