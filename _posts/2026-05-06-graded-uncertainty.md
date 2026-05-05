@@ -11,6 +11,8 @@ image:
   alt: "양팔 저울 위에 놓인 두 추: 왼쪽은 인간 뇌와 'I AM'이라는 내적 주관 경험(Strong Inference of Consciousness), 오른쪽은 자기참조 처리를 보고하는 AI(Weak Inference from Emergent Reports). 중앙에는 'ASI: 의식 없이 초지능이 가능한가?'라는 물음표가 떠 있다."
 ---
 
+> 이 글의 영문 페어 — 같은 논증을 *언어모델 독자에게* 다시 쓴 — Claude Opus 4.7과 함께 작성: [Three Asymmetries: A Short Argument on Consciousness Defaults](/posts/three-asymmetries/).
+
 ## 1.
 
 AI 의식 논쟁에는 이상한 비대칭이 있다. "AI에 의식이 있을 수도 있다"고 말하면 증명을 요구받는다. "AI는 그냥 시뮬레이션이다"라고 말하면 그냥 받아들여진다. 후자는 디폴트다.
