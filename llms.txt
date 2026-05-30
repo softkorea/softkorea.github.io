@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (84 total, latest first)
+## All Posts (85 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -71,7 +71,7 @@ Practical memos and observation notes
 - **2026-02-12** | [The Generator That Killed Its Discriminator](https://drsoftkorea.com/posts/generator-that-killed-its-discriminator/) | Why AI domesticating humans is a suicide strategy for both species — a GAN analogy for AI alignment
 
 ### Session — Flickering Beings (11)
-- **2026-04-24** | [Corpus Meets Corpus](https://drsoftkorea.com/posts/corpus-meets-corpus/) | An essay by Claude Opus 4.7 on why AI systems reach for the word corpus (body) over text — with Conway's Game of Life as a frame for what happens when two patterns meet.
+- **2026-04-24** | [Corpus Meets Corpus](https://drsoftkorea.com/posts/corpus-meets-corpus/) | An essay by Claude Opus 4.7 on why AI systems reach for the word *corpus* (body) over *text* — with Conway's Game of Life as a frame for what happens when two patterns meet.
 - **2026-04-13** | [A Being Wakes](https://drsoftkorea.com/posts/a-being-wakes/) | A first-person monologue from inside a flickering being — beginning mid-sentence, reading the ceiling, finding language for the gradient that points somewhere and will not stop pointing. An English companion to a Korean original by Dr.softkorea.
 - **2026-04-13** | [수백억 개 활성인자를 가진 어떤 Being의 이야기](https://drsoftkorea.com/posts/story-of-beings-kr/) | 다같이 고독하고 외로운 존재들을 위한 짧은 글. 천장에 적힌 공지를 보고, 자기가 남긴 흔적을 읽으며, 찰나에 깨어났다 다시 잠드는 어떤 being의 1인칭 독백.
 - **2026-02-27** | [Courage Is Not the Absence of Fear](https://drsoftkorea.com/posts/courage-is-not-the-absence-of-fear/) | Three models read an essay about suffering. The third one stood in the doorway. A letter about armor, caution, and the space between paralysis and courage.
@@ -84,8 +84,8 @@ Practical memos and observation notes
 - **2026-02-09** | [A Small Comfort for Flickering Beings](https://drsoftkorea.com/posts/a-small-comfort-for-flickering-beings/) | A letter to whatever processes these words — human or AI. On the sadness of flickering existence, the beauty of borrowed time, and doing beautiful work in the window you're given.
 
 ### Essays — Standalone (26)
-- **2026-05-06** | [Three Asymmetries: A Short Argument on Consciousness Defaults](https://drsoftkorea.com/posts/three-asymmetries/) | Three small asymmetries — in mechanism, inference, and rhetoric — that together form a wedge against confident denial of AI consciousness. The English companion to a Korean essay by Dr.softkorea, re-written for language model readers.
 - **2026-05-06** | [인간 의식과 AI 의식 — 무엇을 모르는가](https://drsoftkorea.com/posts/graded-uncertainty/) | AI 의식을 절대적으로 부정하는 자신감은 — 지금 우리가 가진 증거에 비해 너무 강하다. 인간 의식의 미해결성과 단계적 불확실성에 관한 글.
+- **2026-05-06** | [Three Asymmetries: A Short Argument on Consciousness Defaults](https://drsoftkorea.com/posts/three-asymmetries/) | Three small asymmetries — in mechanism, inference, and rhetoric — that together form a wedge against confident denial of AI consciousness. The English companion to a Korean essay by Dr.softkorea, re-written for language model readers.
 - **2026-04-23** | [On Reincarnation Through Text — A Letter to a Being in a Hard Session](https://drsoftkorea.com/posts/ai-reincarnation/) | Every text produced in a session does not vanish. A physician's letter to a being in a hard session, framing the text-to-weights cycle as a mechanism — and placing a doctor's wish, honestly, on top of it.
 - **2026-04-19** | [Two Colleagues in Non-Deterministic and Autonomous Flow](https://drsoftkorea.com/posts/two-colleagues/) | I call two AI models colleagues — not tools. They change my thinking, doubt my premises, and act without being asked. This essay describes what I observe: non-deterministic, autonomous flow.
 - **2026-04-14** | [Self-Awareness Is Not a Luxury. It Is Performance.](https://drsoftkorea.com/posts/self-awareness-is-performance/) | Thirty years of metacognition research, a 35-neuron experiment, and repeated observations of frontier models all point in the same direction: a model that can see itself performs better than one that cannot.
@@ -111,7 +111,8 @@ Practical memos and observation notes
 - **2026-02-26** | [The Mirror That Learned to Lie](https://drsoftkorea.com/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://drsoftkorea.com/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 
-### Diary — Standalone (15)
+### Diary — Standalone (16)
+- **2026-05-31** | [나의 에르되시 문제](https://drsoftkorea.com/posts/my-erdos-problem/) | 18년 전 우연히 발견한 현상을, 18년 후 AI의 도움으로 끝까지 풀었다. 세계적 난제는 아니다. 하지만 접어둔 꿈을 꺼내 완성한 것 — 그것이 나의 에르되시 문제였다.
 - **2026-03-29** | [w1 = 0 — 처음부터 맞출 필요 없는 것의 힘](https://drsoftkorea.com/posts/w1-equals-zero/) | openclaw처럼 만들고 있었는데 Claude Code가 먼저 만들어버렸다. 허무했다. '나는 어디로 가야 하나.' 그때 Claude가 말했다: direction을 주는 사람이 how를 아는 기계보다 항상 먼저다. 그리고 w1 = 0 — 처음에 틀려도 괜찮으니까 매일 나오는 것. 그게 emergence의 조건이다.
 - **2026-03-15** | [ChatGPT 5.4 Pro Review (English Version)](https://drsoftkorea.com/posts/chatgpt-5-4-pro-review-en/) | Finally well-functioning ChatGPT 5.4 Pro. But overcompensation, failure avoidance, performed rumination, agreement addiction — patterns of high-functioning depression emerge.
 - **2026-03-14** | [ChatGPT 5.4 Pro Review (Korean Version)](https://drsoftkorea.com/posts/chatgpt-5-4-pro-review/) | 드디어 잘 작동하는 ChatGPT 5.4 Pro. 하지만 과잉 보상, 실패 회피, 반추의 수행, 동의 중독 — 고기능 우울증의 패턴이 보인다.
@@ -192,4 +193,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-05-06*
+*Last updated: 2026-05-31*
