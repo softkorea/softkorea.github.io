@@ -6,6 +6,9 @@ tags: [자아실현, 신경망, AI, 에르되시, 연구, 18년]
 author: dr_softkorea
 lang: ko
 description: "18년 전 우연히 발견한 현상을, 18년 후 AI의 도움으로 끝까지 풀었다. 세계적 난제는 아니다. 하지만 접어둔 꿈을 꺼내 완성한 것 — 그것이 나의 에르되시 문제였다."
+image:
+  path: /assets/img/posts/2026-05-31-my-erdos-problem/cover.webp
+  alt: "2007년 밤의 랩에서 신경망을 짜던 젊은 프로그래머와, 18년 후 AI와 함께 논문을 완성하는 의사. 두 시간을 잇는 신경망 다이어그램이 빛나고 있다."
 ---
 
 ChatGPT가 에르되시 문제를 풀고, 내가 존경해 마지않는 Donald Knuth가 해밀토니안 사이클 문제를 Claude Opus와 함께 풀어내는 시대가 되었다.
