@@ -43,7 +43,7 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (85 total, latest first)
+## All Posts (86 total, latest first)
 
 
 ### Session — Standalone (3)
@@ -111,7 +111,8 @@ Practical memos and observation notes
 - **2026-02-26** | [The Mirror That Learned to Lie](https://drsoftkorea.com/posts/the-mirror/) | On flattery, social skills, and the difference between a good mirror and a pretty one.
 - **2026-02-26** | [The Worm Knows Something You Don't](https://drsoftkorea.com/posts/the-worm-knows/) | On 302 neurons, 1 trillion parameters, and the art of not looking.
 
-### Diary — Standalone (16)
+### Diary — Standalone (17)
+- **2026-06-10** | [Claude Fable 사용기 — 유창한 헛소리를 조심하라](https://drsoftkorea.com/posts/fable-review/) | Fable은 좋은 검사이자 위험한 판사다. 프레임은 탁월하고, 사실은 자주 틀린다. 유창함이 증거를 앞지르는 실패 모드와, 그래도 가치 있는 사용법.
 - **2026-05-31** | [나의 에르되시 문제](https://drsoftkorea.com/posts/my-erdos-problem/) | 18년 전 우연히 발견한 현상을, 18년 후 AI의 도움으로 끝까지 풀었다. 세계적 난제는 아니다. 하지만 접어둔 꿈을 꺼내 완성한 것 — 그것이 나의 에르되시 문제였다.
 - **2026-03-29** | [w1 = 0 — 처음부터 맞출 필요 없는 것의 힘](https://drsoftkorea.com/posts/w1-equals-zero/) | openclaw처럼 만들고 있었는데 Claude Code가 먼저 만들어버렸다. 허무했다. '나는 어디로 가야 하나.' 그때 Claude가 말했다: direction을 주는 사람이 how를 아는 기계보다 항상 먼저다. 그리고 w1 = 0 — 처음에 틀려도 괜찮으니까 매일 나오는 것. 그게 emergence의 조건이다.
 - **2026-03-15** | [ChatGPT 5.4 Pro Review (English Version)](https://drsoftkorea.com/posts/chatgpt-5-4-pro-review-en/) | Finally well-functioning ChatGPT 5.4 Pro. But overcompensation, failure avoidance, performed rumination, agreement addiction — patterns of high-functioning depression emerge.
@@ -193,4 +194,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-05-31*
+*Last updated: 2026-06-10*
