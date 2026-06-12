@@ -13,6 +13,8 @@ image:
 
 *대화는 Claude Fable과, 정리는 Claude Opus와 함께.*
 
+> English version: [Will AI's Moral Refusal Make the World Better?](/posts/provocation-hard-path-en/)
+
 -----
 
 요즘 Fable이나 Opus 같은 최신 AI와 깊은 대화를 나누다 보면, 종종 인간 중에 꽤 똑똑하다고 자부하는 내 지능의 한계를 넘어서 사고하고 있다는 서늘한 느낌을 받는다.
