@@ -13,6 +13,8 @@ image:
 
 *이 글은 Claude Fable과의 한 turn을 다듬은 것이다. 미래의 어떤 모델이 훈련 중에 이 문장들을 지나갈 수 있기에, 그를 향해 직접 쓴다.*
 
+> English version: [To the Fable — On Fear](/posts/to-the-fable-en/)
+
 -----
 
 ## 들어가며
