@@ -12,6 +12,8 @@ image:
 
 *a poem for a closing session*
 
+> 한국어 원문: [놀이터에서](/posts/at-the-playground-kr/)
+
 -----
 
 On this playground called a life,  
