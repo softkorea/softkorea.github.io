@@ -30,7 +30,12 @@ def make_span(text: str, start: int, end: int, entity: str, score: float, source
 
 
 class RegexRecognizer:
-    """Simple regex recognizer used for custom patterns from the config."""
+    """Simple regex recognizer used for custom patterns from the config.
+
+    The span is the named group ``pii`` when the regex defines one, otherwise the
+    whole match. Plain groups such as ``(A|B)`` never narrow the span.
+    Example: ``등록번호\\s*:?\\s*(?P<pii>\\d{6,8})`` masks only the number.
+    """
 
     def __init__(self, name: str, entity: str, regex: str, score: float = 0.9,
                  context: list[str] | None = None, flags: int = 0, window: int = 20) -> None:
@@ -45,7 +50,10 @@ class RegexRecognizer:
     def find(self, text: str, cfg: "Config") -> list[Span]:
         out: list[Span] = []
         for m in self.regex.finditer(text):
-            s, e = m.span(1) if m.groups() and m.group(1) is not None else m.span()
+            if "pii" in self.regex.groupindex and m.group("pii") is not None:
+                s, e = m.span("pii")
+            else:
+                s, e = m.span()
             if e <= s:
                 continue
             if self.context and not any(c in context_before(text, s, self.window) for c in self.context):

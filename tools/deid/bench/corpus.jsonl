@@ -1,0 +1,206 @@
+{"id": "p19-0", "text": "심민서 보호자님, 환불금은 우체국 126438229921로 입금했습니다.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 19, "end": 31, "entity": "ACCOUNT"}]}
+{"id": "p46-2", "text": "Attending: Dr. 박정숙, Hospital No: 6115029, Adm 2022-04-20, Dx 급성 기관지염(J20.9)", "spans": [{"start": 15, "end": 18, "entity": "PERSON"}, {"start": 33, "end": 40, "entity": "MRN"}, {"start": 46, "end": 56, "entity": "DATE"}]}
+{"id": "p00-1", "text": "환자명: 김다은 (여/28)   등록번호: 75978797\n주소: 대구 수성구 동대구로 449 (범어동)", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 24, "end": 32, "entity": "MRN"}, {"start": 37, "end": 58, "entity": "ADDRESS"}]}
+{"id": "n20-0", "text": "상담 시 우울감 호소, PHQ-9 10점, 수면 {~n3}시간.", "spans": []}
+{"id": "n23-0", "text": "투석 주 3회, 건체중 84.8kg, Kt/V 1.4, Hb 7.1.", "spans": []}
+{"id": "p25-0", "text": "건강보험증번호 0113626399 / 피보험자 홍보람", "spans": [{"start": 8, "end": 18, "entity": "HEALTH_INSURANCE"}, {"start": 26, "end": 29, "entity": "PERSON"}]}
+{"id": "p10-0", "text": "외래 접수: 정아린 / 016-9616-2884 / 경상남도 창원시 성산구 원이대로 298, 자이 123동 402호", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 13, "end": 26, "entity": "PHONE"}, {"start": 29, "end": 64, "entity": "ADDRESS"}]}
+{"id": "p28-1", "text": "사업자등록번호 617-56-09621   대표자 진하늘   전화 053-0430-3722", "spans": [{"start": 8, "end": 20, "entity": "BRN"}, {"start": 27, "end": 30, "entity": "PERSON"}, {"start": 36, "end": 49, "entity": "PHONE"}]}
+{"id": "p26-2", "text": "외국인등록번호 550426-6808134   여권번호 S51181830   Name: Michael Clark", "spans": [{"start": 8, "end": 22, "entity": "FRN"}, {"start": 30, "end": 39, "entity": "PASSPORT"}, {"start": 48, "end": 61, "entity": "PERSON"}]}
+{"id": "p06-1", "text": "최아린 씨 2022년 8월 2일 수술 예정. 최아린 씨 보호자 이다은 님께서 동의서 작성함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 6, "end": 17, "entity": "DATE"}, {"start": 25, "end": 28, "entity": "PERSON"}, {"start": 35, "end": 38, "entity": "PERSON"}]}
+{"id": "p20-0", "text": "주차 등록 차량번호 17저1102 입니다. 이민서 드림", "spans": [{"start": 11, "end": 18, "entity": "PLATE"}, {"start": 24, "end": 27, "entity": "PERSON"}]}
+{"id": "n24-0", "text": "이상 소견 없음. 정상 소견으로 추적 관찰 예정이며 이후 증상 악화 시 재내원.", "spans": []}
+{"id": "p40-1", "text": "Dear Dr. Emily Anderson, I am referring my patient for acute cholecystitis (K81.0).", "spans": [{"start": 9, "end": 23, "entity": "PERSON"}]}
+{"id": "p07-0", "text": "입원 2022.08.20, 퇴원 2024년 8월 12일. 담당의: 한영수, 대상포진(B02.9) 진단 하 로수바스타틴 10mg qd 처방.", "spans": [{"start": 3, "end": 13, "entity": "DATE"}, {"start": 18, "end": 30, "entity": "DATE"}, {"start": 37, "end": 40, "entity": "PERSON"}]}
+{"id": "p37-0", "text": "생년월일 520502 / 연락처 010-6694-7886 / 이메일 hayoon.kim22@example.com", "spans": [{"start": 5, "end": 11, "entity": "BIRTHDATE"}, {"start": 18, "end": 31, "entity": "PHONE"}, {"start": 38, "end": 62, "entity": "EMAIL"}]}
+{"id": "n03-1", "text": "원장님께서 정상 범위라고 설명하심. 다음 검사는 {~n3}개월 후 예정.", "spans": []}
+{"id": "n26-0", "text": "수술 후 {~n3}일째 배액량 150cc, 통증 NRS 7점.", "spans": []}
+{"id": "p44-1", "text": "Please email jsmith76@example.com or call +82 10-6174-1800 with the results.", "spans": [{"start": 13, "end": 33, "entity": "EMAIL"}, {"start": 42, "end": 58, "entity": "PHONE"}]}
+{"id": "p13-2", "text": "백성민(남/26) 님 요추 염좌(S33.5)로 atorvastatin 20mg qhs 28일분 처방, 다음 내원 2022. 1. 4..", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 63, "end": 73, "entity": "DATE"}]}
+{"id": "p17-1", "text": "[이아린] [오전 10:00] 원장님 저 이아린입니다. 내일 예약 변경 가능할까요? 010-1073-9953", "spans": [{"start": 1, "end": 4, "entity": "PERSON"}, {"start": 23, "end": 26, "entity": "PERSON"}, {"start": 47, "end": 60, "entity": "PHONE"}]}
+{"id": "n18-0", "text": "Patient presented with dyspnea. Troponin 0.64 ng/mL, follow up in {~n3} weeks with CBC and CMP.", "spans": []}
+{"id": "p53-2", "text": "조준 씨 두통로 산부인과 내원.", "spans": [{"start": 0, "end": 2, "entity": "PERSON"}]}
+{"id": "p07-1", "text": "입원 2023.10.25, 퇴원 2025-10-07. 담당의: 윤지훈, 제2형 당뇨병(E11.9) 진단 하 알렌드로네이트 70mg 주 1회 처방.", "spans": [{"start": 3, "end": 13, "entity": "DATE"}, {"start": 18, "end": 28, "entity": "DATE"}, {"start": 35, "end": 38, "entity": "PERSON"}]}
+{"id": "p27-0", "text": "여권번호: M836B3562  국적: 베트남  성명: Kim Minjun", "spans": [{"start": 6, "end": 15, "entity": "PASSPORT"}, {"start": 30, "end": 40, "entity": "PERSON"}]}
+{"id": "n05-0", "text": "Na 142 mmol/L (135-145), K 5.9 (3.5-5.1), Cl 105 (98-107).", "spans": []}
+{"id": "p38-0", "text": "환자 성명 김다현   주민등록번호 790810-1660783", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 19, "end": 33, "entity": "RRN"}]}
+{"id": "p02-0", "text": "보호자 이재석(아내) 010-7363-0454에게 검사 결과 설명함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}, {"start": 12, "end": 25, "entity": "PHONE"}]}
+{"id": "p46-1", "text": "Attending: Dr. 신승민, Hospital No: 514038, Adm 2020. 4. 26., Dx 이상지질혈증(E78.5)", "spans": [{"start": 15, "end": 18, "entity": "PERSON"}, {"start": 33, "end": 39, "entity": "MRN"}, {"start": 45, "end": 56, "entity": "DATE"}]}
+{"id": "p12-2", "text": "환자번호 A6523558 황재원 환자 2023. 11. 12. 신경과 협진 의뢰.", "spans": [{"start": 5, "end": 13, "entity": "MRN"}, {"start": 14, "end": 17, "entity": "PERSON"}, {"start": 21, "end": 33, "entity": "DATE"}]}
+{"id": "p31-1", "text": "자택 주소 세종특별자치시 어진동 1261 / 직장 전화 064-6075-0246", "spans": [{"start": 6, "end": 22, "entity": "ADDRESS"}, {"start": 31, "end": 44, "entity": "PHONE"}]}
+{"id": "p28-0", "text": "사업자등록번호 499-59-52410   대표자 강기순   전화 02-6703-3398", "spans": [{"start": 8, "end": 20, "entity": "BRN"}, {"start": 27, "end": 30, "entity": "PERSON"}, {"start": 36, "end": 48, "entity": "PHONE"}]}
+{"id": "p36-2", "text": "주민등록번호: 4203111568108  성명: 한예린  남, 51세", "spans": [{"start": 8, "end": 21, "entity": "RRN"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p18-0", "text": "2022-08-10 오전 9:30, 최상훈 : 선생님 오늘 진료 몇 시까지 하세요?", "spans": [{"start": 0, "end": 10, "entity": "DATE"}, {"start": 20, "end": 23, "entity": "PERSON"}]}
+{"id": "p11-1", "text": "주민번호 671111-1****** 확인 후 조수정 님 본인 인증 완료.", "spans": [{"start": 5, "end": 19, "entity": "RRN"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p50-2", "text": "| 성명 | 신시우 | 생년월일 | 1954-09-04 |", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 20, "end": 30, "entity": "BIRTHDATE"}]}
+{"id": "p47-2", "text": "신지안 환자 (MRN 09900600) BP 146/81, HR 75, BT 37.9, SpO2 88%, Hb 12.4 g/dL", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 12, "end": 20, "entity": "MRN"}]}
+{"id": "p29-0", "text": "결제 카드 5150-2253-5513-0758 (일시불) / 고객명 임광수", "spans": [{"start": 6, "end": 25, "entity": "CARD"}, {"start": 38, "end": 41, "entity": "PERSON"}]}
+{"id": "p19-1", "text": "서민재 보호자님, 환불금은 하나은행 1002-970-880741로 입금했습니다.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 20, "end": 35, "entity": "ACCOUNT"}]}
+{"id": "p10-2", "text": "외래 접수: 서유진 / 010-3534-6934 / 경상남도 창원시 성산구 중앙대로40번길 92", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 13, "end": 26, "entity": "PHONE"}, {"start": 29, "end": 53, "entity": "ADDRESS"}]}
+{"id": "n02-0", "text": "상기 환자는 요추 염좌(S33.5), 역류성 식도염(K21.0)로 본원 f/u 중이며 이상 소견 없음.", "spans": []}
+{"id": "p31-0", "text": "자택 주소 전북특별자치도 전주시 완산구 서신동 676 / 직장 전화 031-4977-2792", "spans": [{"start": 6, "end": 29, "entity": "ADDRESS"}, {"start": 38, "end": 51, "entity": "PHONE"}]}
+{"id": "p52-1", "text": "최순자 학생 결석 확인서: 최순자 학생은 2019.03.08부터 장염으로 결석함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 15, "end": 18, "entity": "PERSON"}, {"start": 23, "end": 33, "entity": "DATE"}]}
+{"id": "p09-0", "text": "이혜원 어르신 BP 111/95, HR 109, BT 38.3, SpO2 94% 측정함. 보호자 연락처 011.7515.0804", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 58, "end": 71, "entity": "PHONE"}]}
+{"id": "p50-1", "text": "| 성명 | 김지민 | 생년월일 | 1968년 12월 13일 |", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 20, "end": 33, "entity": "BIRTHDATE"}]}
+{"id": "n06-0", "text": "losartan 50mg qd, 알렌드로네이트 70mg 주 1회 유지. 부작용 없음.", "spans": []}
+{"id": "p53-0", "text": "한결 씨 복통로 내과 내원.", "spans": [{"start": 0, "end": 2, "entity": "PERSON"}]}
+{"id": "p16-0", "text": "엄마 나 오늘 권다인 선생님한테 진료 받았어 ㅎㅎ 병원 번호 064-6544-4259 저장해둬", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 34, "end": 47, "entity": "PHONE"}]}
+{"id": "p43-1", "text": "Name: Choi Haeun   Phone: 010-6663-8740   Address: 충청남도 천안시 서북구 불당대로 51", "spans": [{"start": 6, "end": 16, "entity": "PERSON"}, {"start": 26, "end": 39, "entity": "PHONE"}, {"start": 51, "end": 71, "entity": "ADDRESS"}]}
+{"id": "n28-0", "text": "MMSE 29/30, CDR 0.5, 기억력 저하 호소하나 일상생활 가능.", "spans": []}
+{"id": "n13-0", "text": "전립선비대증(N40) PSA 2.2 ng/mL, 잔뇨 89cc.", "spans": []}
+{"id": "p45-0", "text": "Server access log: login from IP 10.12.104.46 by hayoon.kim64@test-mail.kr", "spans": [{"start": 33, "end": 45, "entity": "IP"}, {"start": 49, "end": 74, "entity": "EMAIL"}]}
+{"id": "p12-0", "text": "환자번호 P4454775 강민서 환자 2022-05-25 신경과 협진 의뢰.", "spans": [{"start": 5, "end": 13, "entity": "MRN"}, {"start": 14, "end": 17, "entity": "PERSON"}, {"start": 21, "end": 31, "entity": "DATE"}]}
+{"id": "n08-0", "text": "흉부 X선 2매, 복부 초음파 1회, 혈액검사 {~n12}항목 시행.", "spans": []}
+{"id": "p01-0", "text": "탁예은 님은 2024-06-05 내원하여 설사 호소함. 연락처 01114271726.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 7, "end": 17, "entity": "DATE"}, {"start": 35, "end": 46, "entity": "PHONE"}]}
+{"id": "p43-2", "text": "Name: Yoon Taeyun   Phone: 010-2837-2673   Address: 제주특별자치도 제주시 연북로2번길 329", "spans": [{"start": 6, "end": 17, "entity": "PERSON"}, {"start": 27, "end": 40, "entity": "PHONE"}, {"start": 52, "end": 74, "entity": "ADDRESS"}]}
+{"id": "p43-0", "text": "Name: Lee Seoyeon   Phone: 010.4119.8815   Address: 부산 부산진구 서면로 354", "spans": [{"start": 6, "end": 17, "entity": "PERSON"}, {"start": 27, "end": 40, "entity": "PHONE"}, {"start": 52, "end": 67, "entity": "ADDRESS"}]}
+{"id": "p21-1", "text": "마병철님 eGFR 26 나왔고 약은 그대로 드시면 됩니다. 궁금하시면 010.0714.6997로 연락주세요~", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 39, "end": 52, "entity": "PHONE"}]}
+{"id": "p28-2", "text": "사업자등록번호 680-59-81001   대표자 이순자   전화 053-722-5929", "spans": [{"start": 8, "end": 20, "entity": "BRN"}, {"start": 27, "end": 30, "entity": "PERSON"}, {"start": 36, "end": 48, "entity": "PHONE"}]}
+{"id": "p06-2", "text": "라나연 씨 2020년 8월 7일 수술 예정. 라나연 씨 보호자 장상철 님께서 동의서 작성함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 6, "end": 17, "entity": "DATE"}, {"start": 25, "end": 28, "entity": "PERSON"}, {"start": 35, "end": 38, "entity": "PERSON"}]}
+{"id": "p25-1", "text": "건강보험증번호 48494375500 / 피보험자 남지성", "spans": [{"start": 8, "end": 19, "entity": "HEALTH_INSURANCE"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p13-1", "text": "현정우(F/55) 님 대상포진(B02.9)로 esomeprazole 40mg qd 14일분 처방, 다음 내원 2021년 3월 19일.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 61, "end": 73, "entity": "DATE"}]}
+{"id": "n11-0", "text": "선생님께서 처방하신 약은 하루 2번 식후에 드시면 됩니다.", "spans": []}
+{"id": "p16-1", "text": "엄마 나 오늘 설수빈 선생님한테 진료 받았어 ㅎㅎ 병원 번호 064-398-1373 저장해둬", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 34, "end": 46, "entity": "PHONE"}]}
+{"id": "p26-0", "text": "외국인등록번호 990228-6484857   여권번호 M77995456   Name: Emily Smith", "spans": [{"start": 8, "end": 22, "entity": "FRN"}, {"start": 30, "end": 39, "entity": "PASSPORT"}, {"start": 48, "end": 59, "entity": "PERSON"}]}
+{"id": "p34-2", "text": "계좌번호 3333-68-2955638 예금주 권은우", "spans": [{"start": 5, "end": 20, "entity": "ACCOUNT"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "n09-0", "text": "체중 78.5kg, 신장 186cm, BMI 21.5, 허리둘레 72cm.", "spans": []}
+{"id": "p04-2", "text": "S) 김미경 환자 호흡곤란 지속. O) BP 107/56, HR 98, BT 37.4, SpO2 93% A) 골다공증(M81.0) P) levothyroxine 50mcg qd", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}]}
+{"id": "n29-0", "text": "Rt. knee ROM 0-118°, 부종 경미, 2주 후 재평가.", "spans": []}
+{"id": "p49-0", "text": "이름\t이현우\t연락처\t016 4837 9202", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 11, "end": 24, "entity": "PHONE"}]}
+{"id": "p47-0", "text": "장준서 환자 (MRN 2546992585) BP 149/57, HR 63, BT 38.6, SpO2 93%, LDL 180 mg/dL", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 12, "end": 22, "entity": "MRN"}]}
+{"id": "p49-2", "text": "이름\t국서연\t연락처\t01082698525", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 11, "end": 22, "entity": "PHONE"}]}
+{"id": "p24-0", "text": "운전면허 부산 33-042503-81 / 성명: 박명자", "spans": [{"start": 5, "end": 20, "entity": "DRIVER_LICENSE"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p03-2", "text": "성명 강승현   주민등록번호 970314-2881601   생년월일 1989.06.05", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 16, "end": 30, "entity": "RRN"}, {"start": 38, "end": 48, "entity": "BIRTHDATE"}]}
+{"id": "p15-1", "text": "[Web발신] 추지안 님, 2021-10-06 오전 10:00 이비인후과 진료 예약되었습니다. 문의 1577-7704", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 15, "end": 25, "entity": "DATE"}, {"start": 56, "end": 65, "entity": "PHONE"}]}
+{"id": "p35-2", "text": "현 주소는 노원구 상계동 134-40이며 독거 중. 비상연락 01177997035", "spans": [{"start": 6, "end": 20, "entity": "ADDRESS"}, {"start": 34, "end": 45, "entity": "PHONE"}]}
+{"id": "p47-1", "text": "이유진 환자 (MRN 3363381669) BP 159/66, HR 75, BT 37.8, SpO2 93%, LDL 79 mg/dL", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 12, "end": 22, "entity": "MRN"}]}
+{"id": "p17-0", "text": "[심상철] [오전 9:30] 원장님 저 심상철입니다. 내일 예약 변경 가능할까요? 010 3784 4026", "spans": [{"start": 1, "end": 4, "entity": "PERSON"}, {"start": 22, "end": 25, "entity": "PERSON"}, {"start": 46, "end": 59, "entity": "PHONE"}]}
+{"id": "p05-0", "text": "주치의 류다은 선생님께 LDL 128 mg/dL 결과 보고함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p27-1", "text": "여권번호: M447C4739  국적: 베트남  성명: Lim Chaewon", "spans": [{"start": 6, "end": 15, "entity": "PASSPORT"}, {"start": 30, "end": 41, "entity": "PERSON"}]}
+{"id": "p49-1", "text": "이름\t국태윤\t연락처\t011-8790-7330", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 11, "end": 24, "entity": "PHONE"}]}
+{"id": "n05-1", "text": "Na 130 mmol/L (135-145), K 5.8 (3.5-5.1), Cl 109 (98-107).", "spans": []}
+{"id": "p44-2", "text": "Please email yj_choi@univ.example.ac.kr or call +82 10-0316-5696 with the results.", "spans": [{"start": 13, "end": 39, "entity": "EMAIL"}, {"start": 48, "end": 64, "entity": "PHONE"}]}
+{"id": "p53-1", "text": "박현 씨 어지럼증로 신경과 내원.", "spans": [{"start": 0, "end": 2, "entity": "PERSON"}]}
+{"id": "p05-2", "text": "주치의 박다현 선생님께 HbA1c 6.2% 결과 보고함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p35-0", "text": "현 주소는 성산구 상남동 589-16이며 독거 중. 비상연락 011.4148.0070", "spans": [{"start": 6, "end": 20, "entity": "ADDRESS"}, {"start": 34, "end": 47, "entity": "PHONE"}]}
+{"id": "p38-2", "text": "환자 성명 선미경   주민등록번호 961102-2644540", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 19, "end": 33, "entity": "RRN"}]}
+{"id": "p00-2", "text": "환자명: 김상훈 (M/83)   등록번호: 31734212\n주소: 경상남도 창원시 성산구 중앙대로 107, 5층", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 24, "end": 32, "entity": "MRN"}, {"start": 37, "end": 62, "entity": "ADDRESS"}]}
+{"id": "p32-0", "text": "조시은 (1983년생) 전북특별자치도 전주시 완산구 효자로 71, 래미안 107동 1002호", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 5, "end": 11, "entity": "BIRTHDATE"}, {"start": 13, "end": 51, "entity": "ADDRESS"}]}
+{"id": "p42-2", "text": "Referred by Dr. Olivia Miller. Patient ID: 475583.", "spans": [{"start": 16, "end": 29, "entity": "PERSON"}, {"start": 43, "end": 49, "entity": "MRN"}]}
+{"id": "p36-0", "text": "주민등록번호: 1802024220305  성명: 박윤서  남, 85세", "spans": [{"start": 8, "end": 21, "entity": "RRN"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p11-0", "text": "주민번호 920410-1****** 확인 후 박지성 님 본인 인증 완료.", "spans": [{"start": 5, "end": 19, "entity": "RRN"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p24-2", "text": "운전면허 대구 85-045540-35 / 성명: 제지아", "spans": [{"start": 5, "end": 20, "entity": "DRIVER_LICENSE"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p18-1", "text": "2024년 12월 19일 오전 11:20, 황재석 : 선생님 오늘 진료 몇 시까지 하세요?", "spans": [{"start": 0, "end": 13, "entity": "DATE"}, {"start": 24, "end": 27, "entity": "PERSON"}]}
+{"id": "n16-0", "text": "eGFR 57 mL/min/1.73m2, BUN/Cr 57/4.0", "spans": []}
+{"id": "p48-2", "text": "Discharge on 28 Feb 2024. Follow up with Ms. Thomas Moore at 053-4790-4614.", "spans": [{"start": 13, "end": 24, "entity": "DATE"}, {"start": 45, "end": 57, "entity": "PERSON"}, {"start": 61, "end": 74, "entity": "PHONE"}]}
+{"id": "p02-2", "text": "보호자 임하은(배우자) 011-9409-5344에게 검사 결과 설명함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}, {"start": 13, "end": 26, "entity": "PHONE"}]}
+{"id": "n04-1", "text": "1일 1800-2000 kcal 식이, 걷기 30분 주 5회 권장.", "spans": []}
+{"id": "p37-2", "text": "생년월일 1993.10.09 / 연락처 01079879862 / 이메일 seoyeon79@naver-sample.com", "spans": [{"start": 5, "end": 15, "entity": "BIRTHDATE"}, {"start": 22, "end": 33, "entity": "PHONE"}, {"start": 40, "end": 66, "entity": "EMAIL"}]}
+{"id": "p23-0", "text": "신청인: 서영수   운전면허번호: 19-20-357124-13   연락처: 010 8395 6735", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 19, "end": 34, "entity": "DRIVER_LICENSE"}, {"start": 42, "end": 55, "entity": "PHONE"}]}
+{"id": "n22-0", "text": "소아 체중 39.1kg → 아세트아미노펜 12.5mg/kg q6h, 1회 최대 500mg.", "spans": []}
+{"id": "p21-0", "text": "김영숙님 공복혈당 160 mg/dL 나왔고 약은 그대로 드시면 됩니다. 궁금하시면 011-9147-9259로 연락주세요~", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 46, "end": 59, "entity": "PHONE"}]}
+{"id": "n02-1", "text": "상기 환자는 이상지질혈증(E78.5), 급성 기관지염(J20.9)로 본원 f/u 중이며 이상 소견 없음.", "spans": []}
+{"id": "p08-1", "text": "환자 이혜진(여, 42세) 차트번호 70278528, TSH 5.2 mIU/L, TSH 6.8 mIU/L", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 20, "end": 28, "entity": "MRN"}]}
+{"id": "p54-0", "text": "선생님 정채원이가 어제부터 열이 나요. eGFR 72", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p38-1", "text": "환자 성명 이가은   주민등록번호 441127-1737586", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 19, "end": 33, "entity": "RRN"}]}
+{"id": "n25-0", "text": "LDL 121 mg/dL, Hb 11.2 g/dL, AST/ALT 20/95 IU/L. 신기능 저하 없음.", "spans": []}
+{"id": "p13-0", "text": "박유나(남, 34세) 님 요추 염좌(S33.5)로 타이레놀 500mg prn 5일분 처방, 다음 내원 2023-01-14.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 57, "end": 67, "entity": "DATE"}]}
+{"id": "n06-1", "text": "메트포르민 500mg bid, levothyroxine 50mcg qd 유지. 부작용 없음.", "spans": []}
+{"id": "p25-2", "text": "건강보험증번호 5528564605 / 피보험자 장우진", "spans": [{"start": 8, "end": 18, "entity": "HEALTH_INSURANCE"}, {"start": 26, "end": 29, "entity": "PERSON"}]}
+{"id": "p20-1", "text": "주차 등록 차량번호 167하4689 입니다. 박은정 드림", "spans": [{"start": 11, "end": 19, "entity": "PLATE"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p09-1", "text": "류정숙 어르신 BP 151/90, HR 71, BT 37.3, SpO2 94% 측정함. 보호자 연락처 01688788960", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 57, "end": 68, "entity": "PHONE"}]}
+{"id": "p42-1", "text": "Referred by Dr. Thomas Smith. Patient ID: 8498953.", "spans": [{"start": 16, "end": 28, "entity": "PERSON"}, {"start": 42, "end": 49, "entity": "MRN"}]}
+{"id": "n09-1", "text": "체중 76.0kg, 신장 175cm, BMI 33.6, 허리둘레 91cm.", "spans": []}
+{"id": "p34-0", "text": "계좌번호 1002-851-247056 예금주 민수정", "spans": [{"start": 5, "end": 20, "entity": "ACCOUNT"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p41-2", "text": "Mr. Robert Smith was seen on 2024-09-25 for acute cholecystitis (K81.0). Contact: +82 10-1661-0011 / hk.jung3@sample.co.kr", "spans": [{"start": 4, "end": 16, "entity": "PERSON"}, {"start": 29, "end": 39, "entity": "DATE"}, {"start": 82, "end": 98, "entity": "PHONE"}, {"start": 101, "end": 122, "entity": "EMAIL"}]}
+{"id": "p06-0", "text": "옥연우 씨 2021-05-13 수술 예정. 옥연우 씨 보호자 배지안 님께서 동의서 작성함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 6, "end": 16, "entity": "DATE"}, {"start": 24, "end": 27, "entity": "PERSON"}, {"start": 34, "end": 37, "entity": "PERSON"}]}
+{"id": "p29-2", "text": "결제 카드 4595 4763 3016 3143 (일시불) / 고객명 홍태호", "spans": [{"start": 6, "end": 25, "entity": "CARD"}, {"start": 38, "end": 41, "entity": "PERSON"}]}
+{"id": "p22-2", "text": "내일 오전 9:30에 박현우 씨 모시고 갈게요. 박현우 씨 호흡곤란 때문에요. 제 번호는 010-1197-8591", "spans": [{"start": 12, "end": 15, "entity": "PERSON"}, {"start": 27, "end": 30, "entity": "PERSON"}, {"start": 50, "end": 63, "entity": "PHONE"}]}
+{"id": "n10-1", "text": "고령 환자로 낙상 고위험군, 보호자 상주 필요함.", "spans": []}
+{"id": "n15-0", "text": "PT 18.0 sec, INR 1.34, aPTT 38.7 sec.", "spans": []}
+{"id": "p04-1", "text": "S) 표경희 환자 어지럼증 지속. O) BP 149/74, HR 73, BT 38.2, SpO2 93% A) 요추 염좌(S33.5) P) losartan 50mg qd", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}]}
+{"id": "p11-2", "text": "주민번호 981101-1****** 확인 후 윤예린 님 본인 인증 완료.", "spans": [{"start": 5, "end": 19, "entity": "RRN"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p52-0", "text": "기혜진 학생 결석 확인서: 기혜진 학생은 2023년 6월 15일부터 장염으로 결석함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 15, "end": 18, "entity": "PERSON"}, {"start": 23, "end": 35, "entity": "DATE"}]}
+{"id": "p42-0", "text": "Referred by Dr. Michael Miller. Patient ID: 0338277135.", "spans": [{"start": 16, "end": 30, "entity": "PERSON"}, {"start": 44, "end": 54, "entity": "MRN"}]}
+{"id": "n10-0", "text": "고령 환자로 낙상 고위험군, 보호자 상주 필요함.", "spans": []}
+{"id": "p40-2", "text": "Dear Dr. Thomas Harris, I am referring my patient for community-acquired pneumonia (J18.9).", "spans": [{"start": 9, "end": 22, "entity": "PERSON"}]}
+{"id": "p52-2", "text": "김서준 학생 결석 확인서: 김서준 학생은 2025년 8월 22일부터 장염으로 결석함.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 15, "end": 18, "entity": "PERSON"}, {"start": 23, "end": 35, "entity": "DATE"}]}
+{"id": "p30-1", "text": "이메일: hk.jung@example.com   휴대폰: 016-3515-4936", "spans": [{"start": 5, "end": 24, "entity": "EMAIL"}, {"start": 32, "end": 45, "entity": "PHONE"}]}
+{"id": "p30-0", "text": "이메일: jsmith41@naver-sample.com   휴대폰: 010.0215.6894", "spans": [{"start": 5, "end": 30, "entity": "EMAIL"}, {"start": 38, "end": 51, "entity": "PHONE"}]}
+{"id": "p01-1", "text": "소채원 님은 2024년 9월 28일 내원하여 피로감 호소함. 연락처 010-6660-9339.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 7, "end": 19, "entity": "DATE"}, {"start": 38, "end": 51, "entity": "PHONE"}]}
+{"id": "p44-0", "text": "Please email hayoon.kim@test-mail.kr or call +82 10-5735-1123 with the results.", "spans": [{"start": 13, "end": 36, "entity": "EMAIL"}, {"start": 45, "end": 61, "entity": "PHONE"}]}
+{"id": "p14-1", "text": "간호기록: 성순자 환자 BP 159/100, HR 83, BT 37.6, SpO2 97%, 보호자 진수정님 상주.", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 55, "end": 58, "entity": "PERSON"}]}
+{"id": "p26-1", "text": "외국인등록번호 730627-5158984   여권번호 M41041061   Name: Daniel Miller", "spans": [{"start": 8, "end": 22, "entity": "FRN"}, {"start": 30, "end": 39, "entity": "PASSPORT"}, {"start": 48, "end": 61, "entity": "PERSON"}]}
+{"id": "p27-2", "text": "여권번호: S489D0508  국적: 베트남  성명: Lim Chaewon", "spans": [{"start": 6, "end": 15, "entity": "PASSPORT"}, {"start": 30, "end": 41, "entity": "PERSON"}]}
+{"id": "p33-0", "text": "주소: 대전 유성구 대학로20번길 132, 그린빌라 104동 1904호   보호자: 장윤서 (배우자)", "spans": [{"start": 4, "end": 39, "entity": "ADDRESS"}, {"start": 47, "end": 50, "entity": "PERSON"}]}
+{"id": "p08-2", "text": "환자 홍윤서(남, 2세) 차트번호 4794947, HbA1c 8.7%, AST/ALT 69/85 IU/L", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 19, "end": 26, "entity": "MRN"}]}
+{"id": "p01-2", "text": "류영수 님은 2019-11-15 내원하여 흉통 호소함. 연락처 011.7695.4320.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 7, "end": 17, "entity": "DATE"}, {"start": 35, "end": 48, "entity": "PHONE"}]}
+{"id": "p23-2", "text": "신청인: 김준혁   운전면허번호: 16-89-913303-55   연락처: 01698551500", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 19, "end": 34, "entity": "DRIVER_LICENSE"}, {"start": 42, "end": 53, "entity": "PHONE"}]}
+{"id": "p45-1", "text": "Server access log: login from IP 172.48.117.37 by sw.han@naver-sample.com", "spans": [{"start": 33, "end": 46, "entity": "IP"}, {"start": 50, "end": 73, "entity": "EMAIL"}]}
+{"id": "p07-2", "text": "입원 2021.02.03, 퇴원 2025.09.16. 담당의: 박영호, 편두통(G43.9) 진단 하 메트포르민 500mg bid 처방.", "spans": [{"start": 3, "end": 13, "entity": "DATE"}, {"start": 18, "end": 28, "entity": "DATE"}, {"start": 35, "end": 38, "entity": "PERSON"}]}
+{"id": "n27-0", "text": "인슐린 글라진 33단위 취침 전, 리스프로 {~ins2}-{~ins3}단위 식전.", "spans": []}
+{"id": "p51-0", "text": "1. 윤승현 (남, 78세) - 불면증(G47.0)\n2. 김말순 (남/82) - 이상지질혈증(E78.5)", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 32, "end": 35, "entity": "PERSON"}]}
+{"id": "p14-0", "text": "간호기록: 김예은 환자 BP 124/84, HR 80, BT 37.9, SpO2 99%, 보호자 황하은님 상주.", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 54, "end": 57, "entity": "PERSON"}]}
+{"id": "p02-1", "text": "보호자 염윤서(부) 011-5452-2808에게 검사 결과 설명함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}, {"start": 11, "end": 24, "entity": "PHONE"}]}
+{"id": "p35-1", "text": "현 주소는 부산진구 전포동 383-1이며 독거 중. 비상연락 016.4763.1070", "spans": [{"start": 6, "end": 20, "entity": "ADDRESS"}, {"start": 34, "end": 47, "entity": "PHONE"}]}
+{"id": "p19-2", "text": "탁혜진 보호자님, 환불금은 농협 177299545628로 입금했습니다.", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 18, "end": 30, "entity": "ACCOUNT"}]}
+{"id": "p24-1", "text": "운전면허 부산 32-424586-02 / 성명: 권진영", "spans": [{"start": 5, "end": 20, "entity": "DRIVER_LICENSE"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p15-0", "text": "[Web발신] 조승민 님, 2019.08.27 오전 9:30 정형외과 진료 예약되었습니다. 문의 1661-5520", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 15, "end": 25, "entity": "DATE"}, {"start": 54, "end": 63, "entity": "PHONE"}]}
+{"id": "p22-1", "text": "내일 오전 11:20에 양시은 씨 모시고 갈게요. 양시은 씨 발열 때문에요. 제 번호는 011-5936-3220", "spans": [{"start": 13, "end": 16, "entity": "PERSON"}, {"start": 28, "end": 31, "entity": "PERSON"}, {"start": 49, "end": 62, "entity": "PHONE"}]}
+{"id": "p46-0", "text": "Attending: Dr. 박민서, Hospital No: 31523249, Adm 2023.07.16, Dx 제2형 당뇨병(E11.9)", "spans": [{"start": 15, "end": 18, "entity": "PERSON"}, {"start": 33, "end": 41, "entity": "MRN"}, {"start": 47, "end": 57, "entity": "DATE"}]}
+{"id": "p39-1", "text": "Patient: John Anderson, DOB 1994-04-25, MRN 4822448", "spans": [{"start": 9, "end": 22, "entity": "PERSON"}, {"start": 28, "end": 38, "entity": "BIRTHDATE"}, {"start": 44, "end": 51, "entity": "MRN"}]}
+{"id": "p39-2", "text": "Patient: Olivia Smith, DOB December 7, 1950, MRN 192741", "spans": [{"start": 9, "end": 21, "entity": "PERSON"}, {"start": 27, "end": 43, "entity": "BIRTHDATE"}, {"start": 49, "end": 55, "entity": "MRN"}]}
+{"id": "n01-0", "text": "BP 178/74 mmHg, HR 112회/분, BT 38.1℃, SpO2 {~spo2}%.", "spans": []}
+{"id": "p21-2", "text": "성민서님 LDL 124 mg/dL 나왔고 약은 그대로 드시면 됩니다. 궁금하시면 010-5517-4408로 연락주세요~", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 45, "end": 58, "entity": "PHONE"}]}
+{"id": "p05-1", "text": "주치의 옥병철 선생님께 Cr 1.0 mg/dL 결과 보고함.", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p41-1", "text": "Mr. Grace Harris was seen on April 18, 2021 for atrial fibrillation (I48.91). Contact: +82 10-6773-8741 / jhpark59@test-mail.kr", "spans": [{"start": 4, "end": 16, "entity": "PERSON"}, {"start": 29, "end": 43, "entity": "DATE"}, {"start": 87, "end": 103, "entity": "PHONE"}, {"start": 106, "end": 127, "entity": "EMAIL"}]}
+{"id": "n21-0", "text": "본관 {~n12}층 606호 병실로 전동, 산소 2L/min 비강캐뉼라.", "spans": []}
+{"id": "p10-1", "text": "외래 접수: 한혜원 / 010.4666.3584 / 부산광역시 해운대구 센텀중앙로 115", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 13, "end": 26, "entity": "PHONE"}, {"start": 29, "end": 49, "entity": "ADDRESS"}]}
+{"id": "n00-1", "text": "Hb 7.5 g/dL, WBC 9,200/μL, PLT 446K, CRP 7.5 mg/dL로 염증 수치 상승.", "spans": []}
+{"id": "n19-0", "text": "No acute distress. Lungs clear. Plan: continue cefixime 100mg bid and recheck Cr 1.6 mg/dL in {~n3} months.", "spans": []}
+{"id": "p39-0", "text": "Patient: Sophie Miller, DOB January 12, 1950, MRN 0530860819", "spans": [{"start": 9, "end": 22, "entity": "PERSON"}, {"start": 28, "end": 44, "entity": "BIRTHDATE"}, {"start": 50, "end": 60, "entity": "MRN"}]}
+{"id": "n04-0", "text": "1일 1200-1500 kcal 식이, 걷기 30분 주 5회 권장.", "spans": []}
+{"id": "p51-2", "text": "1. 조재원 (남/57) - 급성 기관지염(J20.9)\n2. 최주원 (M/31) - 급성 기관지염(J20.9)", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 34, "end": 37, "entity": "PERSON"}]}
+{"id": "p45-2", "text": "Server access log: login from IP 10.127.236.37 by yj_choi10@example.com", "spans": [{"start": 33, "end": 46, "entity": "IP"}, {"start": 50, "end": 71, "entity": "EMAIL"}]}
+{"id": "n01-1", "text": "BP 120/99 mmHg, HR 130회/분, BT 39.9℃, SpO2 {~spo2}%.", "spans": []}
+{"id": "p16-2", "text": "엄마 나 오늘 봉아린 선생님한테 진료 받았어 ㅎㅎ 병원 번호 062-335-2799 저장해둬", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 34, "end": 46, "entity": "PHONE"}]}
+{"id": "n07-1", "text": "KCD: 편두통(G43.9) / 처방일수 28일, 1일 3회 식후 30분.", "spans": []}
+{"id": "n17-0", "text": "시력 1.2/0.5, 안압 14/21 mmHg, 안저 정상.", "spans": []}
+{"id": "p00-0", "text": "환자명: 차승민 (남, 72세)   등록번호: 63161760\n주소: 경상남도 창원시 성산구 중앙대로 359", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 26, "end": 34, "entity": "MRN"}, {"start": 39, "end": 60, "entity": "ADDRESS"}]}
+{"id": "p04-0", "text": "S) 박예준 환자 인후통 지속. O) BP 102/78, HR 98, BT 37.9, SpO2 90% A) 요추 염좌(S33.5) P) atorvastatin 20mg qhs", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}]}
+{"id": "n07-0", "text": "KCD: 골다공증(M81.0) / 처방일수 14일, 1일 3회 식후 30분.", "spans": []}
+{"id": "p31-2", "text": "자택 주소 대구 수성구 범어동 981-3 / 직장 전화 051-265-5815", "spans": [{"start": 6, "end": 22, "entity": "ADDRESS"}, {"start": 31, "end": 43, "entity": "PHONE"}]}
+{"id": "p03-1", "text": "성명 안연우   주민등록번호 600523-2049641   생년월일 1978-01-13", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 16, "end": 30, "entity": "RRN"}, {"start": 38, "end": 48, "entity": "BIRTHDATE"}]}
+{"id": "p14-2", "text": "간호기록: 서정숙 환자 BP 132/73, HR 85, BT 39.1, SpO2 100%, 보호자 우성민님 상주.", "spans": [{"start": 6, "end": 9, "entity": "PERSON"}, {"start": 55, "end": 58, "entity": "PERSON"}]}
+{"id": "n08-1", "text": "흉부 X선 2매, 복부 초음파 1회, 혈액검사 {~n12}항목 시행.", "spans": []}
+{"id": "p54-1", "text": "선생님 한기순이가 어제부터 열이 나요. LDL 144 mg/dL", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p15-2", "text": "[Web발신] 김지아 님, 2019년 10월 13일 오전 10:00 정형외과 진료 예약되었습니다. 문의 1577-1916", "spans": [{"start": 8, "end": 11, "entity": "PERSON"}, {"start": 15, "end": 28, "entity": "DATE"}, {"start": 58, "end": 67, "entity": "PHONE"}]}
+{"id": "p22-0", "text": "내일 오전 10:00에 류영호 씨 모시고 갈게요. 류영호 씨 호흡곤란 때문에요. 제 번호는 011-9610-0539", "spans": [{"start": 13, "end": 16, "entity": "PERSON"}, {"start": 28, "end": 31, "entity": "PERSON"}, {"start": 51, "end": 64, "entity": "PHONE"}]}
+{"id": "p23-1", "text": "신청인: 김영수   운전면허번호: 16-20-540747-48   연락처: 010.1508.3504", "spans": [{"start": 5, "end": 8, "entity": "PERSON"}, {"start": 19, "end": 34, "entity": "DRIVER_LICENSE"}, {"start": 42, "end": 55, "entity": "PHONE"}]}
+{"id": "p20-2", "text": "주차 등록 차량번호 373라 1414 입니다. 김영호 드림", "spans": [{"start": 11, "end": 20, "entity": "PLATE"}, {"start": 26, "end": 29, "entity": "PERSON"}]}
+{"id": "p33-2", "text": "주소: 경기도 고양시 일산동구 일산로7번길 92, 롯데캐슬 103동 502호   보호자: 주보람 (아들)", "spans": [{"start": 4, "end": 42, "entity": "ADDRESS"}, {"start": 50, "end": 53, "entity": "PERSON"}]}
+{"id": "p36-1", "text": "주민등록번호: 4405242541403  성명: 추지호  남, 42세", "spans": [{"start": 8, "end": 21, "entity": "RRN"}, {"start": 27, "end": 30, "entity": "PERSON"}]}
+{"id": "p48-1", "text": "Discharge on January 11, 2020. Follow up with Ms. Olivia Walker at 064-960-4452.", "spans": [{"start": 13, "end": 29, "entity": "DATE"}, {"start": 50, "end": 63, "entity": "PERSON"}, {"start": 67, "end": 79, "entity": "PHONE"}]}
+{"id": "p32-1", "text": "윤수빈 (2002년생) 강원특별자치도 춘천시 중앙로 167, 7층", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 5, "end": 11, "entity": "BIRTHDATE"}, {"start": 13, "end": 36, "entity": "ADDRESS"}]}
+{"id": "p32-2", "text": "김미란 (64년생) 서울시 송파구 백제고분로 109", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 5, "end": 9, "entity": "BIRTHDATE"}, {"start": 11, "end": 28, "entity": "ADDRESS"}]}
+{"id": "p37-1", "text": "생년월일 1988년 4월 26일 / 연락처 01157587626 / 이메일 hk.jung@sample.co.kr", "spans": [{"start": 5, "end": 17, "entity": "BIRTHDATE"}, {"start": 24, "end": 35, "entity": "PHONE"}, {"start": 42, "end": 62, "entity": "EMAIL"}]}
+{"id": "p54-2", "text": "선생님 설하린이가 어제부터 열이 나요. WBC 10,200/μL", "spans": [{"start": 4, "end": 7, "entity": "PERSON"}]}
+{"id": "p29-1", "text": "결제 카드 5396-6778-4319-3794 (일시불) / 고객명 강시은", "spans": [{"start": 6, "end": 25, "entity": "CARD"}, {"start": 38, "end": 41, "entity": "PERSON"}]}
+{"id": "n12-0", "text": "임신 17주, 추정 체중 2376g, 양수 정상, 태동 양호.", "spans": []}
+{"id": "p34-1", "text": "계좌번호 3333-20-2201612 예금주 이은서", "spans": [{"start": 5, "end": 20, "entity": "ACCOUNT"}, {"start": 25, "end": 28, "entity": "PERSON"}]}
+{"id": "p18-2", "text": "2023년 11월 24일 오전 11:20, 김현우 : 선생님 오늘 진료 몇 시까지 하세요?", "spans": [{"start": 0, "end": 13, "entity": "DATE"}, {"start": 24, "end": 27, "entity": "PERSON"}]}
+{"id": "n14-0", "text": "ECG: NSR, HR 62, QTc 500ms, PR 139ms.", "spans": []}
+{"id": "p17-2", "text": "[송윤서] [오후 3:40] 원장님 저 송윤서입니다. 내일 예약 변경 가능할까요? 016.9491.7022", "spans": [{"start": 1, "end": 4, "entity": "PERSON"}, {"start": 22, "end": 25, "entity": "PERSON"}, {"start": 46, "end": 59, "entity": "PHONE"}]}
+{"id": "p30-2", "text": "이메일: jhpark20@univ.example.ac.kr   휴대폰: 011-4670-1651", "spans": [{"start": 5, "end": 32, "entity": "EMAIL"}, {"start": 40, "end": 53, "entity": "PHONE"}]}
+{"id": "p48-0", "text": "Discharge on August 2, 2021. Follow up with Ms. Sarah Taylor at 062-9009-0374.", "spans": [{"start": 13, "end": 27, "entity": "DATE"}, {"start": 48, "end": 60, "entity": "PERSON"}, {"start": 64, "end": 77, "entity": "PHONE"}]}
+{"id": "p12-1", "text": "환자번호 A1414467 이다현 환자 2019. 9. 8. 이비인후과 협진 의뢰.", "spans": [{"start": 5, "end": 13, "entity": "MRN"}, {"start": 14, "end": 17, "entity": "PERSON"}, {"start": 21, "end": 31, "entity": "DATE"}]}
+{"id": "p08-0", "text": "환자 송춘자(남/7) 차트번호 38779216, HbA1c 6.0%, Hb 13.8 g/dL", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 17, "end": 25, "entity": "MRN"}]}
+{"id": "n03-0", "text": "원장님께서 정상 범위라고 설명하심. 다음 검사는 {~n3}개월 후 예정.", "spans": []}
+{"id": "p40-0", "text": "Dear Dr. Sarah Wilson, I am referring my patient for COPD exacerbation (J44.1).", "spans": [{"start": 9, "end": 21, "entity": "PERSON"}]}
+{"id": "p41-0", "text": "Mr. Daniel Wilson was seen on 2019-12-21 for COPD exacerbation (J44.1). Contact: +82 10-2446-8847 / seoyeon@test-mail.kr", "spans": [{"start": 4, "end": 17, "entity": "PERSON"}, {"start": 30, "end": 40, "entity": "DATE"}, {"start": 81, "end": 97, "entity": "PHONE"}, {"start": 100, "end": 120, "entity": "EMAIL"}]}
+{"id": "p03-0", "text": "성명 임나연   주민등록번호 490208-2531991   생년월일 150706", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 16, "end": 30, "entity": "RRN"}, {"start": 38, "end": 44, "entity": "BIRTHDATE"}]}
+{"id": "n00-0", "text": "Hb 8.9 g/dL, WBC 18,900/μL, PLT 222K, CRP 6.4 mg/dL로 염증 수치 상승.", "spans": []}
+{"id": "p33-1", "text": "주소: 강원특별자치도 춘천시 중앙로 392, 푸르지오 112동 1204호   보호자: 오수빈 (아들)", "spans": [{"start": 4, "end": 40, "entity": "ADDRESS"}, {"start": 48, "end": 51, "entity": "PERSON"}]}
+{"id": "p50-0", "text": "| 성명 | 서수아 | 생년월일 | 1976년 2월 16일 |", "spans": [{"start": 7, "end": 10, "entity": "PERSON"}, {"start": 20, "end": 32, "entity": "BIRTHDATE"}]}
+{"id": "p51-1", "text": "1. 조민재 (남/70) - 골다공증(M81.0)\n2. 정다인 (F/64) - 위식도역류질환(K21.9)", "spans": [{"start": 3, "end": 6, "entity": "PERSON"}, {"start": 31, "end": 34, "entity": "PERSON"}]}
+{"id": "p09-2", "text": "엄윤서 어르신 BP 130/62, HR 101, BT 37.7, SpO2 93% 측정함. 보호자 연락처 016-5954-2484", "spans": [{"start": 0, "end": 3, "entity": "PERSON"}, {"start": 58, "end": 71, "entity": "PHONE"}]}

@@ -175,3 +175,20 @@ class Vault:
 (screencapture -i -> redact -> clipboard + ~/Deid/out), `deid restore` (vault restore stdin/clipboard),
 `deid watch IN OUT`, `deid serve` (127.0.0.1 only web UI), `deid check FILE --llm MODEL`, `deid doctor`
 (environment check: tesseract/kor, ocrmac, ollama reachable).
+
+## Amendments after core build (authoritative where they differ from the text above)
+- Custom regex patterns: the span is the named group `pii` if present, otherwise the whole match
+  (plain capture groups never narrow the span).
+- New entities: MEDICAL_LICENSE (보건의료인 면허번호/전문의 자격번호, context required, redact) and OTHER
+  (LLM-reported identifier of unknown type, redact, label 기타).
+- English PERSON propagation uses ASCII boundaries (no ASCII letter/digit touching the match), so Korean
+  particles may follow an English name ("John이").
+- Email mask keeps the local-part length: minjun@example.com -> m*****@example.com.
+- Vault: Hangul PERSON values ignore internal spaces for token identity; restore() returns first spelling.
+- BIRTHDATE generalization never yields a future year; DATE uses pivot 30 for 2-digit years.
+- `deid.recognizers.patterns.parse_date(text) -> (year, month, day)` is public.
+- `api.deidentify(text, cfg=None, vault=None, *, detector=None) -> (str, Report)`; `deid` package lazily
+  exports deidentify, Detector, Anonymizer, Vault, VaultError, Config, default_config, load_config, Span, Report.
+- NER backends: cfg.ner["backend"] in {"hf", "gliner", "ollama"/"llm"}; GLiNER default model is
+  urchade/gliner_multi_pii-v1 (`gliner` package). Extra [ner] keys: label_map, pii_model, max_chars, overlap,
+  labels, threshold, host, allow_remote, timeout.
