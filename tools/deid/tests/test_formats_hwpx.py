@@ -328,3 +328,79 @@ def test_text_outside_paragraph_runs_is_checked(tmp_path):
     run(src, tmp_path / "out.hwpx")
     sec = read_all(tmp_path / "out.hwpx")["Contents/section0.xml"].decode()
     assert "홍길동" not in sec and "TIMES 2" in sec and "수식 참고" in sec
+
+
+# --------------------------------------------------------------------------- red-team regressions
+
+
+def test_file_leaks_12_attribute_text(tmp_path):
+    """file_leaks-12-hwpx-attributes: 글맵시 text, form object values/captions, 누름틀 field
+    names and bookmark names (read with '_' as a space) are de-identified."""
+    def run_x(inner: str) -> str:
+        return f'<hp:run charPrIDRef="0">{inner}<hp:t/></hp:run>'
+    body = (
+        para(run_t("외래 안내문"), pid=1)
+        + para(run_x('<hp:textart id="5" text="환자 국민아 님 010-8901-0001"><hp:textartPr '
+                     'fontName="함초롬바탕"/></hp:textart>'), pid=2)
+        + para(run_x('<hp:comboBox name="담당의" selectedValue="환자 경민호 010-8901-0002">'
+                     '<hp:listItem displayText="환자 경민호 010-8901-0002" value="환자 경민호 010-8901-0002"/>'
+                     '<hp:listItem displayText="환자 도지원 010-8901-0003" value="v2"/></hp:comboBox>'), pid=3)
+        + para(run_x('<hp:btn name="b1" caption="환자 마동석 님 010-8901-0004" value="UNCHECKED"/>'), pid=4)
+        + para('<hp:run charPrIDRef="0"><hp:ctrl><hp:fieldBegin id="7" type="CLICK_HERE" '
+               'name="환자 사이다 010-8901-0006" editable="1"/></hp:ctrl><hp:t>입력</hp:t><hp:ctrl>'
+               '<hp:fieldEnd beginIDRef="7"/></hp:ctrl></hp:run>', pid=5)
+        + para('<hp:run charPrIDRef="0"><hp:ctrl><hp:bookmark name="환자_반하나_01089010005"/></hp:ctrl>'
+               '<hp:t>참고</hp:t></hp:run>', pid=6)
+    )
+    src = build(tmp_path / "in.hwpx", sections=(section(body),))
+    run(src, tmp_path / "out.hwpx")
+    sec = read_all(tmp_path / "out.hwpx")["Contents/section0.xml"].decode()
+    for v in ("010-8901-0001", "010-8901-0002", "010-8901-0003", "010-8901-0004", "01089010005",
+              "010-8901-0006", "국민아", "경민호", "마동석", "반하나"):
+        assert v not in sec, v
+    assert 'value="UNCHECKED"' in sec and 'value="v2"' in sec and 'name="담당의"' in sec
+    assert '<hp:bookmark name="환자_[이름' in sec          # underscores kept around the token
+
+
+def test_file_leaks_06_hwpx_picture_comment_file_name(tmp_path):
+    """file_leaks-06-office-picture-filenames: Hangul's picture comment keeps a neutral file
+    name and loses the photo's date/camera lines."""
+    comment = ("그림입니다.\n원본 그림의 이름: 상처사진_하은별.jpg\n원본 그림의 크기: 가로 4032pixel, "
+               "세로 3024pixel\n사진 찍은 날짜: 2024년 03월 01일 오전 10:12\n카메라 모델: SM-S918N")
+    body = para(run_t("증례: 하지 궤양, 상처 사진 첨부"),
+                f'<hp:run charPrIDRef="0"><hp:pic id="1"><hp:shapeComment>{comment}</hp:shapeComment>'
+                '</hp:pic><hp:t/></hp:run>', pid=1)
+    src = build(tmp_path / "in.hwpx", sections=(section(body),))
+    rep = run(src, tmp_path / "out.hwpx")
+    sec = read_all(tmp_path / "out.hwpx")["Contents/section0.xml"].decode()
+    assert "하은별" not in sec and "사진 찍은 날짜" not in sec and "SM-S918N" not in sec
+    assert "원본 그림의 이름: file.jpg" in sec and "원본 그림의 크기: 가로 4032pixel" in sec
+    assert any("파일 이름" in w for w in rep.warnings)
+    assert H.clean_picture_comment("환자 사진") == "환자 사진"
+
+
+def test_file_leaks_10_hwpx_bindata_emf_blanked(tmp_path):
+    """file_leaks-10-office-vector-image-text: the same vector-picture check serves HWPX
+    BinData (an EMF of a pasted table showing a patient)."""
+    import struct
+
+    from deid.formats.docx import vector_texts
+    txt = "환자 하은별 010-2233-4455".encode("utf-16-le")
+    emf = (struct.pack("<II", 1, 88) + b"\0" * 32 + b" EMF" + b"\0" * 44
+           + struct.pack("<II", 0x54, 84 + len(txt)) + b"\0" * 76 + txt
+           + struct.pack("<II", 0x0E, 20) + b"\0" * 12)
+    src = build(tmp_path / "in.hwpx", extra={"BinData/image2.emf": emf})
+    rep = run(src, tmp_path / "out.hwpx")
+    out = read_all(tmp_path / "out.hwpx")["BinData/image2.emf"]
+    assert txt not in out and vector_texts(out, ".emf") == ([], False)
+    assert any("벡터 그림" in w for w in rep.warnings)
+
+
+def test_security_zip_bomb_hwpx_refused(tmp_path, monkeypatch):
+    """security-zip-bomb-docx-hwpx: an HWPX that unpacks beyond the budget is refused."""
+    from deid.formats import text as T
+    src = build(tmp_path / "in.hwpx", extra={"BinData/image1.bin": b"\0" * (3 * 1024 * 1024)})
+    monkeypatch.setattr(T, "ZIP_MAX_ENTRY", 1024 * 1024)
+    with pytest.raises(DocumentError, match="zip bomb"):
+        run(src, tmp_path / "out.hwpx")
+    assert not (tmp_path / "out.hwpx").exists()

@@ -420,3 +420,206 @@ def test_paragraph_writer_unit():
     ts = [t.text for t in p.iter(f"{{{W}}}t")]
     assert ts == ["성명: [이름1]", None, " 님"]
     assert main.current() == "성명: [이름1]\t 님"
+
+
+# --------------------------------------------------------------------------- red-team regressions
+
+
+def _emf(text: str) -> bytes:
+    """A small well-formed EMF drawing `text` with one EXTTEXTOUTW record."""
+    import struct
+    txt = text.encode("utf-16-le")
+    pad = (-len(txt)) % 4
+    head = (struct.pack("<II", 1, 88) + struct.pack("<4i", 0, 0, 100, 20)
+            + struct.pack("<4i", 0, 0, 2000, 400) + struct.pack("<II", 0x464D4520, 0x10000)
+            + struct.pack("<IIHHIII", 0, 3, 1, 0, 0, 0, 0) + struct.pack("<4i", 1024, 768, 320, 240))
+    rec = (struct.pack("<II", 0x54, 76 + len(txt) + pad) + struct.pack("<4i", 0, 0, 100, 20)
+           + struct.pack("<Iff", 1, 1.0, 1.0) + struct.pack("<ii", 5, 5)
+           + struct.pack("<III", len(text), 76, 0) + struct.pack("<4i", 0, 0, 100, 20)
+           + struct.pack("<I", 0) + txt + b"\0" * pad)
+    eof = struct.pack("<IIIII", 0x0E, 20, 0, 16, 20)
+    data = bytearray(head + rec + eof)
+    struct.pack_into("<I", data, 48, len(data))
+    return bytes(data)
+
+
+def _wmf(text: str) -> bytes:
+    """A small WMF drawing `text` (cp949) with one TEXTOUT record."""
+    import struct
+    raw = text.encode("cp949")
+    body = raw + (b"\0" if len(raw) % 2 else b"")
+    rec = struct.pack("<IHH", (8 + len(body) + 4) // 2, 0x0521, len(raw)) + body + struct.pack("<hh", 5, 5)
+    eof = struct.pack("<IH", 3, 0)
+    head = struct.pack("<HHHIHIH", 1, 9, 0x300, (18 + len(rec) + len(eof)) // 2, 0, len(rec) // 2, 0)
+    return head + rec + eof
+
+
+def test_file_leaks_10_vector_pictures_emf_wmf_svg(tmp_path):
+    """file_leaks-10-office-vector-image-text: text inside EMF/WMF/SVG pictures is checked;
+    an EMF/WMF showing personal data becomes an empty picture with the same frame, SVG text
+    is replaced, a picture without personal data is kept, and the warning never suggests an
+    option that cannot help."""
+    from deid.formats.docx import vector_texts
+    emf_txt, svg_txt = "환자 하은별 님 010-2233-4455", "환자 국민아 님 010-8901-0010"
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="40"><title>환자 국민아 님'
+           f'</title><text x="5" y="25">{svg_txt}<tspan>확인</tspan> 끝</text></svg>')
+    import gzip
+    src = save(basic_doc(), tmp_path / "in.docx")
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr("word/media/table.emf", _emf(emf_txt))
+        z.writestr("word/media/chart.emz", gzip.compress(_emf("보호자 김민준 010-3333-4444")))
+        z.writestr("word/media/old.wmf", _wmf("환자 이서연 님 010-5555-6666"))
+        z.writestr("word/media/logo.emf", _emf("ACME Clinic"))
+        z.writestr("word/media/icon.svg", svg)
+        z.writestr("word/media/broken.emf", b"\x01\0\0\0garbage")
+    for cfg in (make_cfg(docx_images=True), make_cfg()):
+        rep = run(src, tmp_path / "out.docx", cfg)
+        with zipfile.ZipFile(tmp_path / "out.docx") as z:
+            parts = {n: z.read(n) for n in z.namelist()}
+        emf = parts["word/media/table.emf"]
+        assert emf_txt.encode("utf-16-le") not in emf
+        assert vector_texts(emf, ".emf") == ([], False) and emf[8:40] == _emf(emf_txt)[8:40]
+        assert vector_texts(gzip.decompress(parts["word/media/chart.emz"]), ".emf") == ([], False)
+        assert "이서연".encode("cp949") not in parts["word/media/old.wmf"]
+        assert vector_texts(parts["word/media/old.wmf"], ".wmf") == ([], False)
+        assert parts["word/media/logo.emf"] == _emf("ACME Clinic")
+        out_svg = parts["word/media/icon.svg"].decode()
+        assert "국민아" not in out_svg and "8901-0010" not in out_svg and "<tspan>확인</tspan>" in out_svg
+        assert any("벡터 그림" in w and "3" in w for w in rep.warnings)
+        assert any("1 picture(s) could not be checked" in w for w in rep.warnings)   # broken.emf
+        assert not any("docx_images = true" in w for w in rep.warnings)
+
+
+def test_file_leaks_06_picture_file_names_neutralised(tmp_path):
+    """file_leaks-06-office-picture-filenames: the original file name / path Word stores for
+    a picture (cNvPr name, docPr descr) becomes 'file.<ext>'; real alt text is still checked."""
+    from PIL import Image
+    d = docx.Document()
+    d.add_paragraph("증례: 하지 궤양, 상처 사진 첨부")
+    buf = io.BytesIO()
+    Image.new("RGB", (80, 60), (200, 120, 120)).save(buf, "PNG")
+    d.add_picture(io.BytesIO(buf.getvalue()))
+    d.add_picture(io.BytesIO(buf.getvalue()))
+    src = save(d, tmp_path / "in.docx")
+
+    def patch(s: str) -> str:
+        s = re.sub(r'(<pic:cNvPr [^>]*name=")[^"]*"', r'\1CT_하은별_850315.png"', s, count=1)
+        s = re.sub(r'(<wp:docPr [^>]*?)/>', r'\1 descr="C:\\Users\\doctor\\Desktop\\20240301 하은별 '
+                   r'상처.jpg"/>', s, count=1)
+        return re.sub(r'(<wp:docPr id="2"[^>]*?)/>', r'\1 descr="환자 윤서준 님 상처 사진"/>', s, count=1)
+    patch_part(src, "word/document.xml", patch)
+    rep = run(src, tmp_path / "out.docx")
+    xml = zipfile.ZipFile(tmp_path / "out.docx").read("word/document.xml").decode()
+    assert "하은별" not in xml and "Users" not in xml and "850315" not in xml
+    assert 'name="file.png"' in xml and 'descr="file.jpg"' in xml
+    assert "윤서준" not in xml and "상처 사진" in xml
+    assert any("파일 이름" in w for w in rep.warnings)
+    assert D.file_name_like("image1.png") and not D.file_name_like("그림 1")
+
+
+def test_file_leaks_11_custom_xml_sharepoint_metadata(tmp_path):
+    """file_leaks-11-docx-customxml: SharePoint/OneDrive library columns are typed by their
+    element name; the owner's UserInfo is a person and its account id is cleared."""
+    src = save(basic_doc(), tmp_path / "in.docx")
+    item = ('<?xml version="1.0" encoding="utf-8"?><p:properties xmlns:p="http://schemas.microsoft.com/'
+            'office/2006/metadata/properties"><documentManagement>'
+            '<PatientName xmlns="5c1d">하은별</PatientName><ChartNo xmlns="5c1d">20240311</ChartNo>'
+            '<Ward xmlns="5c1d">7병동</Ward><Owner xmlns="5c1d"><UserInfo><DisplayName>배수지</DisplayName>'
+            '<AccountId>12</AccountId><AccountName>i:0#.w|corp\\sjbae</AccountName></UserInfo></Owner>'
+            '</documentManagement></p:properties>')
+    with zipfile.ZipFile(src, "a") as z:
+        z.writestr("customXml/item7.xml", item)
+    run(src, tmp_path / "out.docx")
+    out = zipfile.ZipFile(tmp_path / "out.docx").read("customXml/item7.xml").decode()
+    for v in ("하은별", "20240311", "배수지", "sjbae"):
+        assert v not in out, v
+    assert "7병동" in out and "<AccountId>12</AccountId>" in out
+
+
+@needs_ocr
+def test_file_leaks_14_default_config_ocrs_screenshots(tmp_path):
+    """file_leaks-14-docx-images-default-off: with the default config ([ocr] docx_images =
+    "auto") a pasted EMR screenshot is OCR'd and covered; tiny pictures are only counted."""
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("RGB", (900, 200), "white")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(str(NANUM), 40)
+    draw.text((30, 40), "환자명: 홍길동", font=font, fill="black")
+    draw.text((30, 110), "연락처 010-2233-4455", font=font, fill="black")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    small = io.BytesIO()
+    Image.new("RGB", (60, 40), "white").save(small, format="PNG")
+    d = basic_doc()
+    d.add_picture(io.BytesIO(buf.getvalue()))
+    d.add_picture(io.BytesIO(small.getvalue()))
+    src = save(d, tmp_path / "in.docx")
+    cfg = make_cfg()
+    assert "docx_images" not in cfg.ocr
+    rep = run(src, tmp_path / "out.docx", cfg)
+    with zipfile.ZipFile(tmp_path / "out.docx") as z:
+        media = sorted(n for n in z.namelist() if n.startswith("word/media/"))
+        big = [z.read(n) for n in media if Image.open(io.BytesIO(z.read(n))).size == (900, 200)][0]
+    lines, _, _ = ocr.lines_from_tesseract(ocr.tesseract_data(Image.open(io.BytesIO(big)).convert("L"),
+                                                              "kor+eng", 6))
+    seen = re.sub(r"\s+", "", "".join(ln.text for ln in lines))
+    assert "홍길동" not in seen and "2233-4455" not in seen
+    assert any("이미지 1개는 검사하지 않음" in w for w in rep.warnings)
+
+
+def test_file_leaks_14_auto_mode_without_ocr_engine(tmp_path, monkeypatch):
+    """file_leaks-14: the "auto" default never refuses a document when no OCR engine works
+    (warning instead); an explicit docx_images = true still fails closed."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(buf, format="PNG")
+    d = basic_doc()
+    d.add_picture(io.BytesIO(buf.getvalue()))
+    src = save(d, tmp_path / "in.docx")
+
+    def no_ocr(self, data, ext):
+        raise ocr.OcrError("no OCR engine")
+    monkeypatch.setattr(D.PackageJob, "_ocr_image", no_ocr)
+    rep = run(src, tmp_path / "out.docx")
+    assert any("OCR 엔진이 없어" in w for w in rep.warnings)
+    assert (tmp_path / "out.docx").exists()
+    with pytest.raises(ocr.OcrError):
+        run(src, tmp_path / "out2.docx", make_cfg(docx_images=True))
+    assert not (tmp_path / "out2.docx").exists()
+    assert D.image_ocr_mode(None) == "auto" and D.image_ocr_mode(True) == "all"
+    assert D.image_ocr_mode(False) == "off" and D.image_ocr_mode("auto") == "auto"
+
+
+def test_over_mask_01_chief_complaint_form_table(tmp_path):
+    """over_mask-01: a '주소 | 두통' form row is the chief complaint, not an address."""
+    d = docx.Document()
+    t = d.add_table(rows=4, cols=2)
+    for i, (k, v) in enumerate([("주소", "두통"), ("현병력", "3일 전부터 두통 및 오심"),
+                                ("진단", "긴장성 두통"), ("자택 주소", "서울특별시 강남구 테헤란로 152")]):
+        t.cell(i, 0).text = k
+        t.cell(i, 1).text = v
+    src = save(d, tmp_path / "in.docx")
+    run(src, tmp_path / "out.docx")
+    cells = [[c.text for c in row.cells] for row in docx.Document(str(tmp_path / "out.docx")).tables[0].rows]
+    assert cells[:3] == [["주소", "두통"], ["현병력", "3일 전부터 두통 및 오심"], ["진단", "긴장성 두통"]]
+    assert "테헤란로" not in cells[3][1]
+
+
+def test_security_zip_bomb_docx_refused(tmp_path, monkeypatch):
+    """security-zip-bomb-docx-hwpx: entries are size-checked before anything is inflated."""
+    from deid.formats import text as T
+    src = save(basic_doc(), tmp_path / "in.docx")
+    with zipfile.ZipFile(src, "a", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/media/pad.bin", b"\0" * (3 * 1024 * 1024))
+    monkeypatch.setattr(T, "ZIP_MAX_ENTRY", 1024 * 1024)
+    with pytest.raises(D.DocumentError, match="zip bomb"):
+        run(src, tmp_path / "out.docx")
+    monkeypatch.setattr(T, "ZIP_MAX_ENTRY", 256 * 1024 * 1024)
+    monkeypatch.setattr(T, "ZIP_RATIO_CHECK", 1024 * 1024)       # 3 MB of zeros: ratio > 200
+    with pytest.raises(D.DocumentError, match="zip bomb"):
+        run(src, tmp_path / "out.docx")
+    monkeypatch.setattr(T, "ZIP_RATIO_CHECK", 32 * 1024 * 1024)
+    monkeypatch.setattr(T, "ZIP_MAX_TOTAL", 2 * 1024 * 1024)
+    with pytest.raises(D.DocumentError, match="zip bomb"):
+        run(src, tmp_path / "out.docx")
+    assert not (tmp_path / "out.docx").exists()

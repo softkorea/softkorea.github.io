@@ -138,9 +138,11 @@ def test_failure_is_logged_and_not_retried(env, monkeypatch):
     in_dir, out_dir, state, logs, once = env
     calls = []
 
-    def boom(*a, **k):
+    from deid.formats.docx import DocumentError
+
+    def boom(*a, **k):   # a deid handler error: its message is safe to log
         calls.append(1)
-        raise ValueError("처리 실패 (synthetic failure)")
+        raise DocumentError("처리 실패 (synthetic failure)")
 
     monkeypatch.setattr(formats, "process_to_dir", boom)
     (in_dir / "a.txt").write_text("환자 홍길동 님", encoding="utf-8")
@@ -187,7 +189,8 @@ def test_removed_file_is_forgotten(env):
     assert state.files == {}
 
 
-def test_notify_uses_deidentified_name(env, monkeypatch):
+def test_notify_counts_only(env, monkeypatch):
+    """security-filename-raw-names: lock-screen notifications carry no file name at all."""
     in_dir, out_dir, state, logs, once = env
     from deid import mac
 
@@ -196,7 +199,8 @@ def test_notify_uses_deidentified_name(env, monkeypatch):
     (in_dir / "홍길동.txt").write_text("환자 홍길동 님", encoding="utf-8")
     once(notify=True), once(notify=True)
     assert len(sent) == 1
-    assert "홍길동" not in sent[0][1] and "[이름1].deid.txt" in sent[0][1]
+    assert "홍길동" not in sent[0][1] and "[이름1]" not in sent[0][1]
+    assert "TXT 파일 1개" in sent[0][1] and "이름 1" in sent[0][1]
 
 
 def test_state_round_trip(tmp_path):
@@ -250,3 +254,117 @@ def test_run_watch_rejects_same_folder(tmp_path, monkeypatch):
     logs: list[str] = []
     assert watch.run_watch(tmp_path, tmp_path, cfg=default_config(), log=logs.append,
                            max_passes=1) == 2
+
+
+# ---------------------------------------------------------------------- regression: ux fixes
+
+
+def test_security_filename_raw_names_watch_outputs_and_logs(env, monkeypatch):
+    """Bare names in dropped file/folder names: no raw name in OUT, the log or notifications."""
+    in_dir, out_dir, state, logs, once = env
+    from deid import mac
+
+    sent = []
+    monkeypatch.setattr(mac, "notify", lambda t, m: sent.append(f"{t}: {m}") or True)
+    body = "검사 결과 특이 소견 없음."
+    (in_dir / "김민서.txt").write_text(body, encoding="utf-8")
+    (in_dir / "박서준_외래기록.txt").write_text(body, encoding="utf-8")
+    (in_dir / "이도윤").mkdir()
+    (in_dir / "이도윤" / "scan1.txt").write_text(body, encoding="utf-8")
+    once(notify=True), once(notify=True)
+    names = ("김민서", "박서준", "이도윤")
+    rels = [p.relative_to(out_dir).as_posix() for p in outputs(out_dir)]
+    assert len(rels) == 3 and not any(n in r for r in rels for n in names)
+    assert len(logs) == 3 and not any(n in line for line in logs for n in names)
+    assert len(sent) == 3 and not any(n in m for m in sent for n in names)
+
+
+def test_security_watch_log_fullpath_third_party_error(env):
+    """PIL errors embed the full source path; the FAIL line must not."""
+    in_dir, out_dir, state, logs, once = env
+    (in_dir / "김민서_진료사진.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
+    (in_dir / "김민서_검사결과.jpg").write_bytes(b"not really a jpeg")
+    once(), once()
+    fails = [line for line in logs if line.startswith("FAIL")]
+    assert len(fails) == 2
+    for line in fails:
+        assert "김민서" not in line and str(in_dir) not in line
+        assert "이미지 파일을 읽을 수 없습니다" in line
+
+
+def test_security_watch_log_fullpath_scrubs_paths(env, monkeypatch):
+    in_dir, out_dir, state, logs, once = env
+    from deid.formats.docx import DocumentError
+
+    errors = iter([
+        lambda p: DocumentError(f"문서를 열 수 없습니다: {p}"),                # deid's own text
+        lambda p: PermissionError(13, "Permission denied", str(p)),          # OSError: strerror
+        lambda p: KeyError(p.stem),                                         # unknown: type only
+    ])
+
+    def boom(path, *a, **k):
+        raise next(errors)(Path(path))
+
+    monkeypatch.setattr(formats, "process_to_dir", boom)
+    sub = in_dir / "박서준"
+    sub.mkdir()
+    for name in ("김민서_소견.docx", "최유나.docx", "이도윤.docx"):
+        (sub / name).write_bytes(b"x")
+    once(), once()
+    fails = [line for line in logs if line.startswith("FAIL")]
+    assert len(fails) == 3
+    for line in fails:
+        assert not any(n in line for n in ("김민서", "최유나", "이도윤", "박서준", str(in_dir)))
+    assert any("문서를 열 수 없습니다" in line for line in fails)
+    assert any("권한이 없습니다 (PermissionError)" in line for line in fails)
+    assert any("(KeyError)" in line for line in fails)
+
+
+def test_security_deid_folders_world_readable_watch(tmp_path, monkeypatch):
+    import stat
+
+    monkeypatch.setenv("DEID_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DEID_DIR", str(tmp_path / "Deid"))
+    old = os.umask(0o022)
+    try:
+        ud = tmp_path / "Deid"
+        assert watch.run_watch(ud / "in", ud / "out", cfg=default_config(), log=lambda m: None,
+                               max_passes=1) == 0
+        for d in (ud, ud / "in", ud / "out"):
+            assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
+        ud.chmod(0o755)                                  # older version: tightened again
+        (ud / "in").chmod(0o755)
+        watch.run_watch(ud / "in", ud / "out", cfg=default_config(), log=lambda m: None,
+                        max_passes=1)
+        assert stat.S_IMODE(ud.stat().st_mode) == 0o700
+        assert stat.S_IMODE((ud / "in").stat().st_mode) == 0o700
+        mine = tmp_path / "shared_in"                    # a folder the user chose: left alone
+        mine.mkdir()
+        mine.chmod(0o750)
+        watch.run_watch(mine, tmp_path / "new_out", cfg=default_config(), log=lambda m: None,
+                        max_passes=1)
+        assert stat.S_IMODE(mine.stat().st_mode) == 0o750
+        assert stat.S_IMODE((tmp_path / "new_out").stat().st_mode) == 0o700
+    finally:
+        os.umask(old)
+
+
+def test_security_session_never_expires_on_disk_watch_pass(tmp_path, monkeypatch):
+    import time
+
+    from deid import session
+
+    monkeypatch.setenv("DEID_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("DEID_SESSION_HOURS", raising=False)
+    v = Vault()
+    v.token_for("PERSON", "김민서", "이름")
+    session.save_session_vault(v)
+    session.meta_file().write_text(json.dumps({"created": time.time() - 13 * 3600}))
+    watch.run_watch(tmp_path / "in", tmp_path / "out", cfg=default_config(),
+                    log=lambda m: None, max_passes=1)
+    assert not session.vault_file().exists() and not session.meta_file().exists()
+    assert not session.key_file().exists()             # the key goes too
+    session.save_session_vault(v)                      # a fresh session survives a pass
+    watch.run_watch(tmp_path / "in", tmp_path / "out", cfg=default_config(),
+                    log=lambda m: None, max_passes=1)
+    assert session.load_session_vault().restore("[이름1]") == "김민서"

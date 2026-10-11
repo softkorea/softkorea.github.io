@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import unicodedata
 
 from . import entities as E
 from .config import Config, default_config
@@ -13,7 +14,7 @@ from .vault import Vault
 # future, so a 2-digit birth year after the current year is moved back to the 1900s.
 YY_PIVOT = 30
 
-_DIGITS = re.compile(r"[0-9]+")
+_DIGITS = re.compile(r"[0-9\uff10-\uff19]+")   # ASCII and full-width digits
 _KO_YEAR = re.compile(r"(?<![0-9])([0-9]{4}|[0-9]{2})\s*년")
 _KO_MONTH = re.compile(r"(?<![0-9])([0-9]{1,2})\s*월")
 _WORD = re.compile(r"[^\W_]+")
@@ -214,8 +215,10 @@ def parse_year_month(value: str, birth: bool = False) -> tuple[int | None, int |
 def generalize_value(entity: str, value: str, label: str) -> tuple[str, str]:
     """ADDRESS -> "서울특별시 강남구 [주소]", BIRTHDATE -> "1985년생", DATE -> "2024년 3월".
 
-    Unknown parts fall back to "[label]"; other entities are redacted.
+    Unknown parts fall back to "[label]"; other entities are redacted. Full-width digits and
+    decomposed Hangul are read like their plain forms ("１９８５．０３．１５" -> "1985년생").
     """
+    value = unicodedata.normalize("NFKC", value)
     if entity == E.ADDRESS:
         prefix = _address_prefix(value)
         return (f"{prefix} [{label}]" if prefix else f"[{label}]"), "generalize"

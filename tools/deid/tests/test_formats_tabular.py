@@ -558,3 +558,181 @@ def test_typed_column_yields_to_stronger_detection(tmp_path, env):
 def test_dated_free_text_is_not_a_header():
     assert TB.column_entity("2024-03-03 전화") is None
     assert TB.column_entity("자택 전화") == "PHONE"
+
+
+# --------------------------------------------------------------------------- red-team regressions
+
+
+def _emf(text: str) -> bytes:
+    """A small well-formed EMF drawing `text` with one EXTTEXTOUTW record."""
+    import struct
+    txt = text.encode("utf-16-le")
+    pad = (-len(txt)) % 4
+    head = (struct.pack("<II", 1, 88) + struct.pack("<4i", 0, 0, 100, 20)
+            + struct.pack("<4i", 0, 0, 2000, 400) + struct.pack("<II", 0x464D4520, 0x10000)
+            + struct.pack("<IIHHIII", 0, 3, 1, 0, 0, 0, 0) + struct.pack("<4i", 1024, 768, 320, 240))
+    rec = (struct.pack("<II", 0x54, 76 + len(txt) + pad) + struct.pack("<4i", 0, 0, 100, 20)
+           + struct.pack("<Iff", 1, 1.0, 1.0) + struct.pack("<ii", 5, 5)
+           + struct.pack("<III", len(text), 76, 0) + struct.pack("<4i", 0, 0, 100, 20)
+           + struct.pack("<I", 0) + txt + b"\0" * pad)
+    eof = struct.pack("<IIIII", 0x0E, 20, 0, 16, 20)
+    data = bytearray(head + rec + eof)
+    struct.pack_into("<I", data, 48, len(data))
+    return bytes(data)
+
+
+def test_file_leaks_05_table_autofilter_and_sort_list(tmp_path, env):
+    """file_leaks-05-xlsx-table-autofilter: a table's (Ctrl+T) own filter values and custom
+    sort list in xl/tables/tableN.xml are de-identified like the cells."""
+    from openpyxl.worksheet.filters import (AutoFilter, CustomFilter, CustomFilters,
+                                            FilterColumn, Filters, SortCondition, SortState)
+    from openpyxl.worksheet.table import TableStyleInfo
+    det, an, cfg = env
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for row in (("이름", "연락처", "진단"), ("홍길동", "010-5678-0001", "고혈압"),
+                ("김민준", "010-5678-0002", "당뇨"), ("이서연", "010-5678-0003", "천식")):
+        ws.append(row)
+    t = Table(displayName="Patients", ref="A1:C4",
+              tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True))
+    t.autoFilter = AutoFilter(ref="A1:C4", filterColumn=[
+        FilterColumn(colId=0, filters=Filters(filter=["홍길동", "김민준"])),
+        FilterColumn(colId=1, filters=Filters(filter=["010-5678-0003"])),
+        FilterColumn(colId=2, customFilters=CustomFilters(customFilter=[
+            CustomFilter(operator="equal", val="이서연*")]))])
+    t.autoFilter.sortState = SortState(ref="A2:C4", sortCondition=[
+        SortCondition(ref="A2:A4", customList="이서연,김민준,홍길동")])
+    ws.add_table(t)
+    src = _save(wb, tmp_path / "t.xlsx")
+    TB.process(src, tmp_path / "o.xlsx", det, an, cfg)
+    with zipfile.ZipFile(tmp_path / "o.xlsx") as z:
+        table = html.unescape(z.read("xl/tables/table1.xml").decode())
+    assert_no_pii(zip_blob(tmp_path / "o.xlsx"), PII + ("010-5678-0003",))
+    out = openpyxl.load_workbook(tmp_path / "o.xlsx").active
+    flt = out.tables["Patients"].autoFilter.filterColumn[0].filters.filter
+    assert flt == [out["A2"].value, out["A3"].value]          # filter still matches the cells
+    assert "sortCondition" in table and "[이름" in table
+
+
+def test_over_mask_01_chief_complaint_column_not_address(tmp_path, env):
+    """over_mask-01: a '주소(C.C.)' column of symptoms is not ADDRESS and its words are not
+    propagated; a real address column is still typed."""
+    det, an, cfg = env
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    rows = [["내원일", "주소(C.C.)", "현병력", "진단", "메모"],
+            ["2024-03-15", "두통", "3일 전부터 두통, 오심 동반", "R51 두통", "두통 지속 시 MRI 고려"],
+            ["2024-03-16", "우측 하복부 통증", "12시간 전 발생", "급성 충수염 의심", "외과 협진"],
+            ["2024-03-18", "어지럼", "기립 시 어지럼", "R42", "어지럼 재발 시 내원"]]
+    for r in rows:
+        ws.append(r)
+    addr = wb.create_sheet("명단")
+    addr.append(["성명", "주소", "메모"])
+    addr.append(["홍길동", "서울특별시 강남구 테헤란로 152", "역삼역 근처"])
+    addr.append(["김민준", "경기 성남시 분당구 판교로 1", "-"])
+    src = _save(wb, tmp_path / "cc.xlsx")
+    TB.process(src, tmp_path / "o.xlsx", det, an, cfg)
+    out = openpyxl.load_workbook(tmp_path / "o.xlsx")
+    got = [list(r) for r in out.worksheets[0].iter_rows(values_only=True)]
+    assert got == rows
+    assert_no_pii(zip_blob(tmp_path / "o.xlsx"), ("홍길동", "김민준", "테헤란로", "판교로"))
+    csv_src = tmp_path / "cc.csv"
+    csv_src.write_text("내원일,주소,진단\n2024-03-15,두통,긴장성 두통\n2024-03-16,어지럼,BPPV\n",
+                       encoding="utf-8")
+    TB.process(csv_src, tmp_path / "o.csv", det, an, cfg)
+    assert (tmp_path / "o.csv").read_text(encoding="utf-8") == csv_src.read_text(encoding="utf-8")
+
+
+def test_over_mask_02_generic_name_hp_and_cell_headers(tmp_path, env):
+    """over_mask-02: 'Name'/'이름' over lab or drug names, 'HP' (H. pylori) over 양성/음성 and
+    'Cell' over cell counts are not PII columns; real name/phone columns still are."""
+    det, an, cfg = env
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Lab"
+    ws.append(["Name", "Value", "Unit", "Reference", "Comment"])
+    ws.append(["Hemoglobin", 14.2, "g/dL", "13-17", "Hemoglobin stable"])
+    ws.append(["Creatinine", 0.9, "mg/dL", "0.7-1.2", "Creatinine normal"])
+    k = wb.create_sheet("약품")
+    k.append(["이름", "용량", "용법"])
+    k.append(["암로디핀", "5mg", "1일 1회"])
+    k.append(["메트포르민", "1000mg", "1일 2회"])
+    e = wb.create_sheet("Endo")
+    e.append(["검사일", "HP", "CLO", "Hb", "Cell", "비고"])
+    e.append(["2024-03-15", "양성", "+", 13.5, 12500, "HP 양성으로 제균 치료"])
+    e.append(["2024-03-16", "음성", "-", 12.1, 9800, "추적 관찰"])
+    p = wb.create_sheet("명단")
+    p.append(["이름", "나이", "HP", "Cell"])
+    p.append(["홍길동", 45, "010-1234-5678", 1012345678])
+    p.append(["Kim Minjun", 52, "010-2222-3333", "-"])
+    src = _save(wb, tmp_path / "in.xlsx")
+    TB.process(src, tmp_path / "o.xlsx", det, an, cfg)
+    a, b = openpyxl.load_workbook(src), openpyxl.load_workbook(tmp_path / "o.xlsx")
+    for name in ("Lab", "약품", "Endo"):
+        assert [list(r) for r in a[name].iter_rows(values_only=True)] == \
+               [list(r) for r in b[name].iter_rows(values_only=True)], name
+    people = [list(r) for r in b["명단"].iter_rows(values_only=True)]
+    assert people[1][0] == "[이름1]" and people[2][0] == "[이름2]"
+    assert "5678" in people[1][2] and "1234" not in people[1][2]
+    assert "2345678" not in str(people[1][3])
+    # analyze_header unit: a Name column with name-shaped values needs no other evidence
+    policy = TB.ColumnPolicy()
+    assert TB.analyze_header([{0: "이름", 1: "진단"}, {0: "최유나", 1: "고혈압"},
+                              {0: "박도현", 1: "당뇨"}], policy) == (0, {0: "PERSON"})
+    assert TB.analyze_header([{0: "이름", 1: "진단"}, {0: "Hemoglobin", 1: "x"}], policy) == (None, {})
+    assert TB.plausible("PHONE", 12500) is False and TB.plausible("PHONE", 1012345678)
+
+
+def test_tl01_headerless_rows_in_csv(tmp_path, env):
+    """tl01-tsv-clipboard-headers (headerless variant): 'name | sex | age' rows of a file."""
+    det, an, cfg = env
+    src = tmp_path / "rows.tsv"
+    src.write_text("여민하\tF\t29\t고혈압\n도하준\tM\t61\t당뇨\n", encoding="utf-8")
+    TB.process(src, tmp_path / "o.tsv", det, an, cfg)
+    out = (tmp_path / "o.tsv").read_text(encoding="utf-8")
+    assert "여민하" not in out and "도하준" not in out and "\tF\t29\t고혈압" in out
+
+
+def test_file_leaks_19_xlsm_emf_pictures_checked(tmp_path, env):
+    """file_leaks-19-xlsm-media-passthrough: openpyxl copies xl/media/*.emf of an .xlsm
+    verbatim; an EMF showing personal data is blanked and the warning lists what was kept."""
+    det, an, cfg = env
+    wb = openpyxl.Workbook()
+    wb.active.append(["항목", "값"])
+    wb.active.append(["용량", 10])
+    plain = _save(wb, tmp_path / "p.xlsx")
+    txt = "환자 하은별 010-2233-4455"
+    xlsm = tmp_path / "m.xlsm"
+    with zipfile.ZipFile(plain) as zi, zipfile.ZipFile(xlsm, "w") as zo:
+        for n in zi.namelist():
+            zo.writestr(n, zi.read(n))
+        zo.writestr("xl/vbaProject.bin", b"FAKE-VBA")
+        zo.writestr("xl/media/image1.emf", _emf(txt))
+        zo.writestr("xl/media/image2.emf", _emf("Sheet1 A1:B2"))
+    report = TB.process(xlsm, tmp_path / "o.xlsm", det, an, cfg)
+    with zipfile.ZipFile(tmp_path / "o.xlsm") as z:
+        assert z.read("xl/vbaProject.bin") == b"FAKE-VBA"
+        blanked = z.read("xl/media/image1.emf")
+        assert txt.encode("utf-16-le") not in blanked and blanked[:4] == b"\x01\0\0\0"
+        assert z.read("xl/media/image2.emf") == _emf("Sheet1 A1:B2")   # nothing to hide
+    assert any("VBA" in w and "NOT scanned" in w for w in report.warnings)
+    assert any("EMF" in w and "1" in w for w in report.warnings)
+
+
+def test_security_zip_bomb_xlsx_refused(tmp_path, env, monkeypatch):
+    """security-zip-bomb-docx-hwpx: a workbook that unpacks beyond the budget is refused
+    before openpyxl inflates it."""
+    from deid.formats import text as T
+    det, an, cfg = env
+    wb = openpyxl.Workbook()
+    wb.active.append(["이름"])
+    plain = _save(wb, tmp_path / "p.xlsx")
+    bomb = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(plain) as zi, zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as zo:
+        for n in zi.namelist():
+            zo.writestr(n, zi.read(n))
+        zo.writestr("xl/media/pad.bin", b"\0" * (3 * 1024 * 1024))
+    monkeypatch.setattr(T, "ZIP_MAX_ENTRY", 1024 * 1024)
+    with pytest.raises(ValueError, match="zip bomb"):
+        TB.process(bomb, tmp_path / "o.xlsx", det, an, cfg)
+    assert not (tmp_path / "o.xlsx").exists()

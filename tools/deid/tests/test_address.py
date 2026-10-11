@@ -120,3 +120,42 @@ def test_generalize_every_detected_address():
     text = "서울 강남구 테헤란로 123 그리고 제주시 연동 123-4 그리고 OO아파트 101동 1203호"
     got = [generalize_address(s.text) for s in REC.find(text, default_config())]
     assert got == ["서울 강남구", "제주시", ""]
+
+
+# --- red-team regressions ---------------------------------------------------
+
+def _deid(text):
+    from deid import deidentify
+    return deidentify(text)[0]
+
+
+@pytest.mark.parametrize("text, unit, prefix", [
+    ("주소: 부산 해운대구 우동 센텀파크 102동 1503호", "1503호", "부산 해운대구 [주소]"),
+    ("저희 잠실동 리센츠 211동 1101호 살아요", "1101호", "저희 [주소] 살아요"),
+    ("방문간호 주소는 저희집 101동 1203호에요", "1203호", "[주소]에요"),
+    ("송파구 잠실동 잠실엘스 123동 456호", "456호", "송파구 [주소]"),
+    ("지금은 광산구 수완동 대방노블랜드 6차 608동 1904호요", "1904호", "광산구 [주소]요"),
+    ("송부지: 충북 청주시 흥덕구 복대동 3375 지웰시티 2차 203동 2102호", "2102호", "흥덕구 [주소]"),
+    ("경기 용인시 수지구 풍덕천동 663 수지삼성 2차 204동 1302호", "1302호", "수지구 [주소]"),
+    ("인천 연수구 송도동 더샵퍼스트파크 F15블록 1503동 2201호", "2201호", "인천 연수구 [주소]"),
+])
+def test_tl05_apartment_units(text, unit, prefix):
+    out = _deid(text)
+    assert unit not in out and prefix in out
+
+
+@pytest.mark.parametrize("text", ["2호선 타고 101동 앞에서 만남", "71병동 3호실", "본관 3동 201호 진료실",
+                                  "1. 김정숙(805호) 재검", "712호 재검 나감"])
+def test_tl05_rooms_and_wards_are_not_apartment_units(text):
+    assert REC.find(text, default_config()) == []
+
+
+@pytest.mark.parametrize("text, leak", [
+    ("Address: 302-1104, 15 Banpo-daero, Seocho-gu, Seoul", "Banpo"),
+    ("455 Harrow Lane, Suite 300, Portland, OR 97205", "Harrow"),
+    ("Banpo-daero 23-gil 15, Seocho-gu", "Banpo"),
+])
+def test_tl20_romanized_and_english_addresses(text, leak):
+    spans = REC.find(text, default_config())
+    assert spans and all(sp.entity == ADDRESS for sp in spans)
+    assert leak not in _deid(text)

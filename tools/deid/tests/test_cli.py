@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 import json
 import plistlib
 import re
@@ -440,11 +441,15 @@ def test_clip_empty_and_files(fake_mac, capsys):
     fake_mac.clipboard = b""
     fake_mac.info = ""
     assert cli.main(["clip"]) == 1
+    # mac_clip_failpaths_keep_original: a copied Finder file cannot be de-identified here, so
+    # it is cleared (Cmd+V into a browser would upload the original) and the user is told.
     fake_mac.clipboard = "홍길동.docx".encode()
     fake_mac.info = "«class furl», 40, «class utf8», 12"
-    assert cli.main(["clip"]) == 1
-    assert fake_mac.clipboard == "홍길동.docx".encode()       # untouched
+    assert cli.main(["clip", "--notify"]) == 1
+    assert fake_mac.clipboard == b""
     assert "deid file" in capsys.readouterr().err
+    title, message = fake_mac.notifications[-1]
+    assert "클립보드를 비웠습니다" in message and "홍길동" not in message
 
 
 def test_clip_image(fake_mac, capsys, monkeypatch):
@@ -813,3 +818,267 @@ def test_init_config_documents_columns_and_doctor_checks_them(tmp_path, capsys, 
     assert cli.main(["doctor"]) == 2
     out = capsys.readouterr().out
     assert "[XX] 설정 파일 [columns]" in out
+
+
+# ---------------------------------------------------------------------- regression: ux fixes
+
+
+def test_security_filename_raw_names_bare_names_are_pseudonymized(tmp_path):
+    """A bare patient name in a file or folder name has no context, but must not survive."""
+    cfg = default_config()
+    det, an = Detector(cfg), Anonymizer(cfg)
+    body = "검사 결과 특이 소견 없음. 2주 후 외래 재진."
+    src = tmp_path / "src"
+    (src / "박서준").mkdir(parents=True)
+    names = {}
+    for f in ("김민서.txt", "박서준_외래기록.txt", "이도윤 소견서.txt", "최유나의 검사결과.txt"):
+        (src / f).write_text(body, encoding="utf-8")
+        names[f] = Path(formats.process_to_dir(src / f, tmp_path / "out", det, an, cfg).output).name
+    assert names == {"김민서.txt": "[이름1].deid.txt",
+                     "박서준_외래기록.txt": "[이름2]_외래기록.deid.txt",
+                     "이도윤 소견서.txt": "[이름3] 소견서.deid.txt",
+                     "최유나의 검사결과.txt": "[이름4]의 검사결과.deid.txt"}
+    (src / "박서준" / "scan1.txt").write_text(body, encoding="utf-8")
+    rep = formats.process_to_dir(src / "박서준" / "scan1.txt", tmp_path / "out", det, an, cfg,
+                                 rel_dir="박서준")
+    assert Path(rep.output).relative_to(tmp_path / "out").as_posix() == "[이름2]/scan1.deid.txt"
+    assert an.vault.restore("[이름1]") == "김민서"     # restorable like any other token
+    # macOS often stores Hangul file names decomposed (NFD)
+    import unicodedata
+    assert formats.deid_filename(unicodedata.normalize("NFD", "정소연_진료사진"), det, an) == \
+        "[이름5]_진료사진"
+
+
+def test_security_filename_raw_names_common_words_kept():
+    """The file-name rule must not hide ordinary clinic words that start with a surname."""
+    cfg = default_config()
+    det, an = Detector(cfg), Anonymizer(cfg)
+    for name in ("진료기록", "조직검사", "정상소견", "문진표", "장기요양", "소견서", "진단서", "심전도",
+                 "동영상", "지원서", "사용자 설명서", "구성원 명단", "주소록", "경기도 지원사업",
+                 "강남구 보건소", "연세대 자료", "도서관", "최종본", "최종안", "신청서_2024", "공유기 설정",
+                 "주사기 재고", "고혈압 교육자료", "방문자 명단", "검사결과_2024-03-05", "사진", "백업"):
+        assert formats.deid_filename(name, det, an) == name, name
+    assert len(an.vault) == 0
+
+
+def test_security_filename_raw_names_respects_config():
+    from deid.config import config_from_dict
+
+    keep = config_from_dict({"actions": {"PERSON": "keep"}}, default_config())
+    assert formats.deid_filename("김민서_외래", Detector(keep), Anonymizer(keep)) == "김민서_외래"
+    allow = config_from_dict({"allowlist": ["김민서"]}, default_config())
+    assert formats.deid_filename("김민서_외래", Detector(allow), Anonymizer(allow)) == "김민서_외래"
+    masked = config_from_dict({"actions": {"PERSON": "redact"}}, default_config())
+    assert formats.deid_filename("김민서_외래", Detector(masked), Anonymizer(masked)) == "[이름]_외래"
+    cfg = default_config()
+    assert formats.deid_filename("김민서", Detector(cfg), Anonymizer(cfg), guess_names=False) == "김민서"
+
+
+def test_security_filename_raw_names_deid_file_cli(tmp_path, capsys):
+    src = tmp_path / "이도윤 소견서.txt"
+    src.write_text("특이 소견 없음", encoding="utf-8")
+    assert cli.main(["file", str(src)]) == 0
+    assert [p.name for p in (tmp_path / "deid_out").iterdir()] == ["[이름1] 소견서.deid.txt"]
+    assert "이도윤" not in capsys.readouterr().out.split("->", 1)[1]
+
+
+def _bad_config(tmp_path) -> Path:
+    bad = tmp_path / "config.toml"
+    bad.write_text('names = ["최유나",\nallowlist = [\n', encoding="utf-8")
+    return bad
+
+
+def test_mac_clip_failpaths_keep_original_config_error(fake_mac, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("DEID_CONFIG", str(_bad_config(tmp_path)))
+    mac.copy_text("환자 최유나 (010-2345-6789) 내원")
+    assert cli.main(["clip", "--notify"]) == 2
+    assert fake_mac.clipboard == b""
+    assert "설정 파일 오류" in capsys.readouterr().err
+    title, message = fake_mac.notifications[-1]
+    assert "클립보드를 비웠습니다" in message and "최유나" not in message
+
+
+def test_mac_clip_failpaths_keep_original_image_read_failure(fake_mac, capsys):
+    fake_mac.clipboard = b""
+    fake_mac.info = "TIFF picture, 654321"           # an image, but not readable as PNGf
+    assert cli.main(["clip", "--notify"]) == 2
+    assert fake_mac.clipboard == b"" and fake_mac.image_set == []
+    assert any(c[0] == "pbcopy" for c in fake_mac.calls)   # actively cleared
+    assert "클립보드를 비웠습니다" in fake_mac.notifications[-1][1]
+    assert "이미지를 읽을 수 없습니다" in capsys.readouterr().err
+
+
+def test_mac_clip_failpaths_keep_original_tool_and_session_errors(fake_mac, capsys, monkeypatch):
+    fake_mac.fail.add("pbpaste")                    # MacError from paste_text
+    mac.copy_text("환자 최유나 님")
+    assert cli.main(["clip", "--notify"]) == 2
+    assert fake_mac.clipboard == b""
+    fake_mac.fail.clear()
+
+    from deid import session
+
+    def locked(*a, **k):
+        raise session.SessionError(session.KEYCHAIN_ERROR)
+
+    monkeypatch.setattr(session, "load_session_vault", locked)
+    mac.copy_text("환자 최유나 님")
+    assert cli.main(["clip", "--notify"]) == 2
+    assert fake_mac.clipboard == b""
+    assert "키체인" in fake_mac.notifications[-1][1]
+    fake_mac.clipboard, fake_mac.info = b"", "«class PDF », 2000"   # neither text nor image
+    assert cli.main(["clip"]) == 1
+    assert fake_mac.info == ""                     # cleared through pbcopy
+    capsys.readouterr()
+
+
+def _redact_stub(monkeypatch, seen=None):
+    def fake_process(src, dst, detector, anonymizer, cfg, **kw):
+        if seen is not None:
+            seen.append(Path(src).read_bytes())
+        Path(dst).write_bytes(b"\x89PNG redacted")
+        r = Report()
+        r.add("PERSON")
+        return r
+
+    monkeypatch.setattr(formats, "process_file", fake_process)
+
+
+def test_mac_shot_control_key_clipboard(fake_mac, tmp_path, capsys, monkeypatch):
+    """Control held while selecting: screencapture writes no file and puts the RAW capture on
+    the clipboard. deid shot must redact it, not exit as if cancelled."""
+    def to_clipboard(args, *, input=None, timeout=None):
+        if args[0] == "screencapture":
+            fake_mac.calls.append(list(args))
+            fake_mac.info = "«class PNGf», 123456, TIFF picture, 654321"
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+        return FakeMac.__call__(fake_mac, args, input=input, timeout=timeout)
+
+    import subprocess
+
+    monkeypatch.setattr(mac, "run", to_clipboard)
+    seen: list[bytes] = []
+    _redact_stub(monkeypatch, seen)
+    out = tmp_path / "shots"
+    assert cli.main(["shot", "--notify", "-o", str(out)]) == 0
+    assert seen == [b"\x89PNG fake"]                         # read from the clipboard
+    files = list(out.glob("shot-*.png"))
+    assert len(files) == 1 and fake_mac.image_set == [str(files[0])]   # clipboard replaced
+    assert "Control" in capsys.readouterr().err
+    # --no-clipboard: the raw capture must still not stay on the clipboard
+    fake_mac.info, fake_mac.clipboard = "«class utf8», 10", b"x"
+    assert cli.main(["shot", "--no-clipboard", "-o", str(out)]) == 0
+    assert fake_mac.clipboard == b"" and len(fake_mac.image_set) == 1
+    # unreadable capture on the clipboard: cleared, failure reported
+    fake_mac.info, fake_mac.clipboard = "«class utf8», 10", b"x"
+    real = to_clipboard
+
+    def unreadable(args, *, input=None, timeout=None):
+        proc = real(args, input=input, timeout=timeout)
+        if args[0] == "screencapture":
+            fake_mac.info = "TIFF picture, 99"           # image, but no PNGf flavour
+        return proc
+
+    monkeypatch.setattr(mac, "run", unreadable)
+    assert cli.main(["shot", "--notify", "-o", str(out)]) == 2
+    assert fake_mac.clipboard == b""
+    assert "클립보드를 비웠습니다" in fake_mac.notifications[-1][1]
+
+
+def test_mac_shot_control_key_clipboard_cancel_stays_quiet(fake_mac, tmp_path, capsys):
+    fake_mac.capture_ok = False
+    mac.copy_text("이전에 복사한 글")
+    assert cli.main(["shot", "-o", str(tmp_path / "s")]) == 1
+    assert fake_mac.clipboard == "이전에 복사한 글".encode()   # an Esc leaves the clipboard alone
+    assert capsys.readouterr().err == ""
+
+
+def test_security_deid_folders_world_readable_cli(fake_mac, isolated, tmp_path, capsys,
+                                                  monkeypatch):
+    old = os.umask(0o022)
+    try:
+        assert cli.main(["install-watch"]) == 0
+        for d in (isolated / "Deid", isolated / "Deid" / "in", isolated / "Deid" / "out"):
+            assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
+        (isolated / "Deid").chmod(0o755)                    # left by an older version
+        _redact_stub(monkeypatch)
+        assert cli.main(["shot", "--full", "--no-clipboard"]) == 0
+        assert stat.S_IMODE((isolated / "Deid").stat().st_mode) == 0o700
+        shots = tmp_path / "myshots"
+        assert cli.main(["shot", "--full", "--no-clipboard", "-o", str(shots)]) == 0
+        assert stat.S_IMODE(shots.stat().st_mode) == 0o700   # created by deid: private
+        (isolated / "Deid" / "in").chmod(0o755)
+        capsys.readouterr()
+        cli.main(["doctor"])
+        out = capsys.readouterr().out
+        assert "다른 사용자 계정도 읽을 수 있습니다" in out and "chmod 700" in out
+    finally:
+        os.umask(old)
+
+
+def test_security_session_never_expires_on_disk_any_command(capsys, monkeypatch):
+    import time as _time
+
+    from deid import session
+    from deid.vault import Vault
+
+    v = Vault()
+    v.token_for("PERSON", "김민서", "이름")
+    session.save_session_vault(v)
+    session.meta_file().write_text(json.dumps({"created": _time.time() - 13 * 3600}))
+    assert cli.main(["init-config", "--path", "cfg.toml"]) == 0      # an unrelated command
+    assert not session.vault_file().exists() and not session.key_file().exists()
+    assert not session.meta_file().exists()
+
+
+def test_mac_heic_pipx_install_hints(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "prefix", "/Users/a/.local/pipx/venvs/deid-kit")
+    assert cli.install_hint("pillow-heif") == "pipx inject deid-kit pillow-heif"
+    monkeypatch.setattr(sys, "prefix", "/Users/a/Library/Application Support/pipx/venvs/deid-kit")
+    assert cli.install_hint("ocrmac") == "pipx inject deid-kit ocrmac"
+    monkeypatch.setattr(sys, "prefix", "/opt/venv")
+    hint = cli.install_hint("transformers", "torch")
+    assert " -m pip install transformers torch" in hint and hint.startswith(
+        __import__("shlex").quote(sys.executable))
+    import importlib.util
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a, **k: None if name == "pillow_heif" else real(name, *a, **k))
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert "-m pip install pillow-heif" in out
+    assert not re.search(r"(?<![-\w])pip install", out.replace("-m pip install", ""))
+
+
+def test_mac_pyproject_build_metadata():
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - python 3.10
+        tomllib = pytest.importorskip("tomli")
+    root = Path(__file__).resolve().parent.parent
+    data = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))
+    proj = data["project"]
+    assert proj["license"] == "MIT"                       # SPDX string, not a TOML table
+    assert any(r.replace(" ", "").startswith("setuptools>=77") for r in data["build-system"]["requires"])
+    assert (root / proj["readme"]).is_file()
+    deps = [d.replace(" ", "").replace('"', "'") for d in proj["dependencies"]]
+    assert "pillow-heif>=0.16;sys_platform=='darwin'" in deps
+    assert "tomli>=2;python_version<'3.11'" in deps
+    assert not any(d.startswith("pytesseract") for d in deps)
+    assert proj["optional-dependencies"]["heic"] == ["pillow-heif>=0.16"]
+
+
+def test_mac_keychain_error_wipes_session_doctor_warns(fake_mac, monkeypatch, capsys):
+    from deid import session
+    from deid.vault import Vault
+
+    monkeypatch.setattr(session, "_use_keychain", lambda: True)
+    v = Vault()
+    v.token_for("PERSON", "최유나", "이름")
+    session.save_session_vault(v)
+    fake_mac.fail.add("security")                    # Keychain locked from now on
+    capsys.readouterr()
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert "[!!] 세션 키 (Keychain)" in out
+    assert session.vault_file().exists()             # doctor never deletes it

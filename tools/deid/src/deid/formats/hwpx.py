@@ -10,15 +10,20 @@
   out again. Text between ``deleteBegin``/``deleteEnd`` track-change markers is wiped.
 * Field parameters (hyperlink targets such as mailto:, memo parameters) and shape comments are
   de-identified; absolute file paths (linked files) become "file.<ext>"; track-change and memo
-  author names become "익명".
+  author names become "익명". The comment Hangul writes for every inserted picture ("원본 그림의
+  이름: 상처사진_<patient>.jpg", "사진 찍은 날짜: ...") keeps only a neutral file name and loses
+  the photo's date/camera lines.
+* Text kept in attributes is checked too: 글맵시 text, form objects (combo/list box values,
+  button captions), 누름틀 field names and bookmark names (with "_" read as a space).
 * ``Contents/content.hpf`` metadata (title, creator, last saved by, subject, description,
   keywords) is cleared; author names are also registered as known names.
 * ``Preview/PrvText.txt`` (plain-text preview of the first page - it would leak) is rebuilt
   from the de-identified text; ``Preview/PrvImage.*`` (thumbnail) is replaced by a blank image
   of the same size.
-* ``BinData``: image metadata is stripped; text inside images is checked only with ``[ocr]
-  hwpx_images = true`` (or ``docx_images``), otherwise a warning counts the unchecked images.
-  Embedded OLE objects are emptied (warning).
+* ``BinData``: image metadata is stripped; raster images are OCR'd per ``[ocr] hwpx_images``
+  (default "auto" = screenshot-sized images; ``true`` all, ``false`` none; falls back to
+  ``docx_images``), EMF/WMF/SVG text is checked and a vector picture showing personal data is
+  blanked; a warning counts what was not checked. Embedded OLE objects are emptied (warning).
 * Everything else (version.xml, settings.xml, META-INF/*, header.xml styles) is kept
   byte-identical; the zip keeps its entry order and ``mimetype`` is written first, uncompressed.
 
@@ -35,12 +40,14 @@ from ..types import Report
 from .docx import (
     ANONYMOUS,
     IMAGE_EXTS,
+    DTD_ERROR,
     DocumentError,
     PackageJob,
     TextSpec,
     ZipPackage,
     blank_image_like,
     encode_image,
+    image_ocr_mode,
     local,
     neutral_file_name,
 )
@@ -79,6 +86,31 @@ _PASSWORD_ERROR = ("암호가 걸렸거나 배포용으로 보호된 한글 문�
                    "시도하세요. (the HWPX document is password-protected or encrypted)")
 
 _SECTION = re.compile(r"Contents/section(\d+)\.xml")
+# Attributes holding visible or stored text: element local name -> attribute names.
+TEXT_ATTRS = {
+    "textart": ("text",),                                # 글맵시
+    "comboBox": ("selectedValue",), "listBox": ("selectedValue",),
+    "listItem": ("displayText", "value"),
+    "btn": ("caption",), "checkBtn": ("caption",), "radioBtn": ("caption",),
+    "edit": ("text",),
+    "fieldBegin": ("name",),                             # 누름틀 / field names
+    "bookmark": ("name",),
+}
+_ID_ATTRS = frozenset({("fieldBegin", "name"), ("bookmark", "name")})
+# Picture comment lines: the original file name and EXIF-derived lines (date, camera).
+_PIC_NAME_LINE = re.compile(r"^([ \t]*원본[ \t]*그림의[ \t]*이름[ \t]*[:：][ \t]*)(.*?)([ \t]*)$", re.M)
+_EXIF_LINE = re.compile(
+    r"^[ \t]*(?:사진[ \t]*찍은[ \t]*날짜|찍은[ \t]*날짜|촬영[^\n:：]{0,10}|카메라[^\n:：]{0,10}|GPS[^\n:：]{0,10})"
+    r"[ \t]*[:：][^\n]*(?:\r?\n|\Z)", re.M)
+
+
+def clean_picture_comment(text: str) -> str:
+    """'원본 그림의 이름: 상처사진_홍길동.jpg' -> '원본 그림의 이름: file.jpg'; date/camera lines
+    of the photo are dropped."""
+    text = _PIC_NAME_LINE.sub(
+        lambda m: m.group(1) + (neutral_file_name(m.group(2)) if m.group(2).strip() else "")
+        + m.group(3), text)
+    return _EXIF_LINE.sub("", text).rstrip("\r\n") if _EXIF_LINE.search(text) else text
 _ABS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/|file:)", re.I)
 
 
@@ -107,13 +139,17 @@ class _HwpxJob(PackageJob):
             try:
                 self.tree(name)
             except DocumentError as e:
+                if str(e) == DTD_ERROR:
+                    raise
                 raise DocumentError(_PASSWORD_ERROR if b"<" not in (self.pkg.get(name) or b"")[:64]
                                     else _OPEN_ERROR) from e
         self._people(scrub=False)
         for name in self.text_parts:
             self.add_paragraphs(name)
             self._params(name)
+            self._attributes(name)
             self.leaf_slots(name)          # equation scripts, unknown structures
+        self.collect_vectors(self._bindata_images())
         self.batch.run()
         self._people(scrub=True)
         self._scrub_hpf()
@@ -141,7 +177,24 @@ class _HwpxJob(PackageJob):
                     continue          # handled by _people
                 self.element_slot(name, el)
             elif lname in ("shapeComment", "comment") and len(el) == 0:
+                if el.text:
+                    new = clean_picture_comment(el.text)
+                    if new != el.text:
+                        el.text = new
+                        self.dirty.add(name)
+                        self.note("file_name")
                 self.element_slot(name, el)
+
+    def _attributes(self, name: str) -> None:
+        """Visible or stored text in attributes (글맵시, form objects, field/bookmark names)."""
+        for el in self.tree(name).iter():
+            lname = local(el.tag)
+            keys = TEXT_ATTRS.get(lname)
+            if not keys:
+                continue
+            for key in list(el.attrib):
+                if local(key) in keys:
+                    self.attr_slot(name, el, key, underscores=(lname, local(key)) in _ID_ATTRS)
 
     def _author_parts(self) -> list[str]:
         parts = list(self.text_parts)
@@ -269,12 +322,15 @@ class _HwpxJob(PackageJob):
                     blank = encode_image(Image.new("RGB", (1, 1), (255, 255, 255)), ext)
                 self.pkg.set(name, blank)
 
+    def _bindata_images(self) -> list[str]:
+        return [n for n in self.pkg.names if n.startswith("BinData/") and not n.endswith("/")
+                and posixpath.splitext(n)[1].lower() in IMAGE_EXTS]
+
     def _bindata(self) -> None:
         names = [n for n in self.pkg.names if n.startswith("BinData/") and not n.endswith("/")]
-        images = [n for n in names if posixpath.splitext(n)[1].lower() in IMAGE_EXTS]
+        images = self._bindata_images()
         opts = self.cfg.ocr or {}
-        option = bool(opts.get("hwpx_images", opts.get("docx_images", False)))
-        self.image_parts(images, option)
+        self.image_parts(images, image_ocr_mode(opts.get("hwpx_images", opts.get("docx_images"))))
         for name in names:
             ext = posixpath.splitext(name)[1].lower()
             if name in images or ext in FONT_EXTS:

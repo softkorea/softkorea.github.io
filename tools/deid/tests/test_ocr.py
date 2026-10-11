@@ -202,15 +202,16 @@ def fake_tesseract(tmp_path, monkeypatch):
 def test_tesseract_runs_binary_via_stdin_in_parallel_passes(fake_tesseract):
     img = Image.new("RGB", (100, 50), "white")
     res = ocr_image(img, cfg_with(engine="tesseract", psm=[4, 6, 11], upscale=False,
-                                  lang="kor+eng"))
+                                  lang="kor+eng", adaptive=True))
     calls = fake_tesseract.read_text().splitlines()
-    assert len(calls) == 3
+    assert len(calls) == 4            # 3 passes + 1 adaptive-threshold pass (file_leaks-15)
     assert all("omp=1 " in c for c in calls)                 # one thread per process
     assert all(" args=stdin stdout -l kor+eng --psm " in c and c.endswith(" tsv") for c in calls)
-    assert sorted(c.split("--psm ")[1].split()[0] for c in calls) == ["11", "4", "6"]
+    assert sorted(c.split("--psm ")[1].split()[0] for c in calls) == ["11", "11", "4", "6"]
+    assert sum("thresholding_method=2" in c for c in calls) == 1
     assert all(int(c.split("bytes=")[1].split()[0]) > 50 for c in calls)   # PNG on stdin
     assert [ln.engine for ln in res.lines] == ["tesseract/psm4", "tesseract/psm6",
-                                               "tesseract/psm11"]
+                                               "tesseract/psm11", "tesseract/psm11a"]
     line = res.lines[0]
     assert line.text == "홍길동 sa y"                          # tab inside text kept as a split
     assert line.words[0].box == (20, 20, 120, 60) and line.words[0].conf == 96.5
@@ -289,7 +290,8 @@ def test_low_confidence_warning(monkeypatch):
     monkeypatch.setattr(ocr, "_check_tesseract", lambda lang, cmd=None: "tesseract")
     rows = [(5, 1, 1, 1, 1, i, 10 * i, 0, 8, 10, 10, f"w{i}") for i in range(6)]
     monkeypatch.setattr(ocr, "tesseract_data", lambda *a, **k: _tess_dict(rows))
-    res = ocr_image(Image.new("RGB", (100, 20), "white"), cfg_with(engine="tesseract", psm=6))
+    res = ocr_image(Image.new("RGB", (100, 20), "white"), cfg_with(engine="tesseract", psm=6,
+                                                                    adaptive=False))
     assert res.engine == "tesseract"
     assert res.low_conf_words == 6 and res.words == 6
     assert len(res.lines) == 1 and res.lines[0].text == "w0 w1 w2 w3 w4 w5"   # kept
@@ -315,7 +317,10 @@ class _FakeOCR:
 
     def recognize(self, px=False):
         assert px is True, "deid must ask ocrmac for pixel coordinates"
-        return list(_FakeOCR.results.get(self.kw.get("framework", "vision"), []))
+        key = self.kw.get("framework", "vision")
+        if key == "livetext" and self.kw.get("unit") == "line":
+            key = "livetext-line"          # Live Text line strings (with their spaces)
+        return list(_FakeOCR.results.get(key, []))
 
 
 @pytest.fixture
@@ -367,7 +372,7 @@ def test_vision_custom_languages_and_level(fake_ocrmac):
 
 
 def test_vision_passes_rgb_image(fake_ocrmac):
-    fake_ocrmac.results["vision"] = []
+    fake_ocrmac.results["vision"] = [("abc", 1.0, (0, 0, 10, 5))]   # (empty would be confirmed)
     seen = {}
     orig = fake_ocrmac.__init__
 
@@ -411,8 +416,9 @@ def test_livetext_groups_characters_into_lines(fake_ocrmac):
     random.Random(4).shuffle(tokens)
     fake_ocrmac.results["livetext"] = tokens
     res = ocr_image(Image.new("RGB", (800, 120), "white"), cfg_with(engine="livetext"))
-    kw = fake_ocrmac.calls[-1]
+    kw = fake_ocrmac.calls[0]
     assert kw["framework"] == "livetext" and kw["unit"] == "token"
+    assert fake_ocrmac.calls[1]["unit"] == "line"             # spacing from the line strings
     assert "recognition_level" not in kw
     assert res.engine == "livetext"
     assert [ln.text for ln in res.lines] == ["환자명: 홍길동 metformin", "보호자 김민준 님"]
@@ -449,6 +455,7 @@ def test_line_from_box_words():
 
 def test_auto_prefers_livetext_then_vision_on_macos(fake_ocrmac, monkeypatch):
     monkeypatch.setattr(ocr, "_is_macos", lambda: True)
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (14, 5))
     fake_ocrmac.results["livetext"] = _char_tokens("홍길동", 0, 0)
     fake_ocrmac.results["vision"] = [("vision text", 1.0, (0, 0, 50, 10))]
     img = Image.new("RGB", (100, 40))
@@ -529,3 +536,190 @@ def test_tesseract_reads_korean_and_boxes_match_drawing():
 def test_tesseract_blank_image_has_no_lines():
     res = ocr_image(Image.new("RGB", (300, 120), "white"), cfg_with(engine="tesseract"))
     assert res.lines == [] and res.text == ""
+
+
+# ---------------------------------------------------------------------- red-team regressions
+
+
+def test_mac_apple_ocr_empty_fail_open_auto_unconfirmed_empty_raises(fake_ocrmac, monkeypatch):
+    """mac_apple_ocr_empty_fail_open: Live Text [] (failure looks like 'no text'), Vision raising
+    and no tesseract must not be read as 'the image has no text'."""
+    monkeypatch.setattr(ocr, "_is_macos", lambda: True)
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (14, 5))
+    monkeypatch.setattr(ocr, "_find_tesseract", lambda: None)
+    fake_ocrmac.results["livetext"] = []
+    fake_ocrmac.fail = {"vision"}
+    with pytest.raises(OcrError, match="confirm"):
+        ocr_image(Image.new("RGB", (60, 30), "white"), cfg_with())
+    # two Apple engines agreeing that there is no text: a blank picture is fine
+    fake_ocrmac.fail = set()
+    fake_ocrmac.results["vision"] = []
+    assert ocr_image(Image.new("RGB", (60, 30), "white"), cfg_with()).lines == []
+
+
+def test_mac_apple_ocr_empty_fail_open_explicit_engine_confirmed_elsewhere(fake_ocrmac,
+                                                                          monkeypatch):
+    """mac_apple_ocr_empty_fail_open: an explicit Apple engine's empty result is checked by the
+    other engines; what they find is used, and with none available it is an error."""
+    monkeypatch.setattr(ocr, "_is_macos", lambda: True)
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (14, 5))
+    fake_ocrmac.results["vision"] = []
+    fake_ocrmac.results["livetext"] = _char_tokens("홍길동", 0, 0)
+    res = ocr_image(Image.new("RGB", (100, 40)), cfg_with(engine="vision"))
+    assert res.engine == "livetext" and res.lines[0].text == "홍길동"
+    fake_ocrmac.results["livetext"] = []
+    monkeypatch.setitem(ocr._ENGINE_FUNCS, "tesseract",
+                        lambda img, opts: ocr.OcrResult([], "tesseract"))
+    assert ocr_image(Image.new("RGB", (100, 40)), cfg_with(engine="vision")).lines == []
+    monkeypatch.setattr(ocr, "_find_tesseract", lambda: None)
+    monkeypatch.setitem(ocr._ENGINE_FUNCS, "tesseract", ocr._ocr_tesseract)
+    fake_ocrmac.fail = {"livetext"}
+    with pytest.raises(OcrError, match="confirm"):
+        ocr_image(Image.new("RGB", (100, 40)), cfg_with(engine="vision"))
+
+
+def test_mac_apple_ocr_empty_fail_open_livetext_off_main_thread(fake_ocrmac, monkeypatch):
+    """mac_apple_ocr_empty_fail_open: ocrmac's Live Text returns [] at once on a worker thread
+    (deid serve); deid refuses there, and auto mode moves on to Vision."""
+    import threading
+
+    monkeypatch.setattr(ocr, "_is_macos", lambda: True)
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (14, 5))
+    fake_ocrmac.results["livetext"] = _char_tokens("홍길동", 0, 0)
+    fake_ocrmac.results["vision"] = [("vision text", 1.0, (0, 0, 50, 10))]
+    out = {}
+
+    def go():
+        try:
+            out["explicit"] = ocr_image(Image.new("RGB", (100, 40)), cfg_with(engine="livetext"))
+        except OcrError as e:
+            out["explicit"] = e
+        out["auto"] = ocr_image(Image.new("RGB", (100, 40)), cfg_with())
+
+    t = threading.Thread(target=go)
+    t.start()
+    t.join()
+    assert isinstance(out["explicit"], OcrError) and "main thread" in str(out["explicit"])
+    assert out["auto"].engine == "vision"
+    assert not any(kw.get("framework") == "livetext" for kw in fake_ocrmac.calls)
+
+
+def test_mac_apple_ocr_empty_fail_open_versions(fake_ocrmac, monkeypatch):
+    """mac_apple_ocr_empty_fail_open: auto skips Live Text below macOS 14 (as doctor says), and
+    doctor does not call Vision 'ok' on macOS 12 (no Korean)."""
+    monkeypatch.setattr(ocr, "_is_macos", lambda: True)
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (13, 6))
+    assert ocr._auto_order() == ["vision", "tesseract"]
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (14, 0))
+    assert ocr._auto_order() == ["livetext", "vision", "tesseract"]
+    monkeypatch.setattr(ocr, "_macos_version", lambda: (12, 7))
+    assert ocr.engine_status()["vision"].startswith("incomplete")
+    assert "vision" not in ocr.available_engines()
+
+
+def test_mac_livetext_lost_spaces_uses_line_strings(fake_ocrmac):
+    """mac_livetext_lost_spaces: narrow word spaces ("보호자 윤서진") are taken from Live Text's own
+    line string instead of being guessed from box gaps."""
+    text = "보호자 윤서진 (배우자) 내원"
+    toks, x = [], 10.0
+    for ch in text:
+        if ch == " ":
+            x += 2.0                         # space narrower than 0.25 x height (24 px)
+            continue
+        toks.append((ch, 1.0, (x, 10.0, x + 18.0, 34.0)))
+        x += 19.0
+    assert group_tokens(toks).__getitem__(0).text.startswith("보호자윤서진")   # the old guess
+    fake_ocrmac.results["livetext"] = toks
+    fake_ocrmac.results["livetext-line"] = [(text, 1.0, (8.0, 8.0, x + 2, 36.0))]
+    res = ocr_image(Image.new("RGB", (400, 50)), cfg_with(engine="livetext"))
+    assert [ln.text for ln in res.lines] == [text]
+    line = res.lines[0]
+    s = text.index("윤서진")
+    exp = union_box(t[2] for t in toks if t[0] in "윤서진")
+    assert line.span_box(s, s + 3) == pytest.approx(exp)     # exact character boxes kept
+    # a line string that does not spell the characters is ignored (gap heuristic)
+    fake_ocrmac.results["livetext-line"] = [("보호자 김서진 (배우자) 내원", 1.0, (8.0, 8.0, x + 2, 36.0))]
+    res = ocr_image(Image.new("RGB", (400, 50)), cfg_with(engine="livetext"))
+    assert res.lines[0].text.startswith("보호자윤서진")
+    # two Live Text lines side by side on one row stay separate words
+    left = [("홍", 1.0, (0, 0, 20, 24)), ("길", 1.0, (21, 0, 41, 24)), ("동", 1.0, (42, 0, 62, 24))]
+    right = [("님", 1.0, (63, 0, 83, 24))]
+    lines = group_tokens(left + right, line_strings=[("홍길동", 1, (0, 0, 62, 24)),
+                                                     ("님", 1, (63, 0, 83, 24))])
+    assert lines[0].text == "홍길동 님"
+
+
+def test_mac_ocrmac_100_unit_kwarg_livetext_without_unit(monkeypatch):
+    """mac_ocrmac_100_unit_kwarg: ocrmac 1.0.0's OCR() has no `unit` keyword; Live Text must
+    still work (its output is already per character)."""
+    calls = []
+
+    class OCR100:
+        def __init__(self, image, framework="vision", recognition_level="accurate",
+                     language_preference=None, confidence_threshold=0.0, detail=True):
+            calls.append(language_preference)
+
+        def recognize(self, px=False):
+            return [(c, 1.0, (10.0 + 32 * i, 10.0, 40.0 + 32 * i, 42.0))
+                    for i, c in enumerate("최유나")]
+
+    pkg = types.ModuleType("ocrmac")
+    mod = types.ModuleType("ocrmac.ocrmac")
+    mod.OCR = OCR100
+    pkg.ocrmac = mod
+    monkeypatch.setitem(sys.modules, "ocrmac", pkg)
+    monkeypatch.setitem(sys.modules, "ocrmac.ocrmac", mod)
+    res = ocr_image(Image.new("RGB", (200, 60)), cfg_with(engine="livetext"))
+    assert [ln.text for ln in res.lines] == ["최유나"]
+    assert calls == [["ko-KR", "en-US"]]                       # languages still passed
+
+
+def test_file_leaks_04_parse_osd():
+    """file_leaks-04: tesseract OSD output -> clockwise correction."""
+    out = ("Page number: 0\nOrientation in degrees: 270\nRotate: 90\n"
+           "Orientation confidence: 1.81\nScript: Hangul\nScript confidence: 0.00\n")
+    assert ocr.parse_osd(out) == 90
+    assert ocr.parse_osd(out.replace("Rotate: 90", "Rotate: 0")) == 0
+    assert ocr.parse_osd(out.replace("1.81", "0.10")) == 0          # not confident
+    assert ocr.parse_osd("") == 0
+
+
+@needs_tesseract
+@needs_font
+def test_file_leaks_04_detect_rotation_real_tesseract():
+    """file_leaks-04: sideways text is recognised as rotated (OSD), upright text is not."""
+    if "osd" not in ocr.tesseract_languages():
+        pytest.skip("tesseract osd data missing")
+    font = ImageFont.truetype(str(FONT), 32)
+    img = Image.new("RGB", (1000, 330), "white")
+    d = ImageDraw.Draw(img)
+    for i, t in enumerate(["환자명: 하은별", "연락처 010-2233-4455", "주민등록번호 850315-1234561"]):
+        d.text((30, 30 + 100 * i), t, font=font, fill="black")
+    assert ocr.detect_rotation(img) == 0
+    assert ocr.detect_rotation(img.rotate(90, expand=True)) == 90
+    assert ocr.detect_rotation(img.rotate(270, expand=True)) == 270
+    assert ocr.detect_rotation(Image.new("RGB", (200, 100), "white")) == 0   # never raises
+
+
+def test_file_leaks_15_adaptive_pass_only_for_tinted_pictures():
+    """file_leaks-15: the adaptive pass runs (auto) for UI-coloured pictures, not plain pages."""
+    white = Image.new("L", (100, 100), 255)
+    tinted = Image.new("L", (100, 100), 195)                 # KakaoTalk-like background
+    assert not ocr._adaptive_wanted(white, "auto") and ocr._adaptive_wanted(tinted, "auto")
+    assert ocr._adaptive_wanted(white, True) and not ocr._adaptive_wanted(tinted, "off")
+
+
+@needs_tesseract
+@needs_font
+def test_file_leaks_15_adaptive_pass_reads_text_on_coloured_bars():
+    """file_leaks-15: text on a messenger's coloured title bar is read (adaptive threshold)."""
+    font = ImageFont.truetype(str(FONT), 22)
+    img = Image.new("RGB", (720, 400), (178, 199, 217))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 0, 720, 60), fill=(160, 180, 200))
+    d.text((300, 15), "하은별", font=font, fill="black")
+    d.rounded_rectangle((95, 115, 640, 190), 12, fill="white")
+    d.text((110, 125), "선생님 어제 처방받은 약 먹고 어지러워요", font=font, fill="black")
+    d.text((95, 300), "연락처 010-2233-4455", font=font, fill=(60, 60, 60))
+    joined = "".join(ocr_image(img, cfg_with(engine="tesseract")).text.split())
+    assert "010-2233-4455" in joined and "하은별" in joined

@@ -20,7 +20,8 @@ if TYPE_CHECKING:
     from ..config import Config
 
 DEFAULT_MODEL = "urchade/gliner_multi_pii-v1"
-INSTALL_HINT = 'the "gliner" NER backend needs gliner: pip install "deid-kit[gliner]"'
+INSTALL_HINT = ('the "gliner" NER backend needs gliner: pipx inject deid-kit gliner '
+                '(without pipx: pip install "deid-kit[gliner]")')
 
 DEFAULT_LABELS: dict[str, str] = {
     "person": E.PERSON,

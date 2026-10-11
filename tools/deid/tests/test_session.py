@@ -213,9 +213,9 @@ def test_keychain_stores_key(keychain, home):
     assert not session.key_file().exists()          # key went to the Keychain, not a file
     key = keychain.keychain[("deid", "deid-session")]
     assert len(key) == 64
-    add = [c for c in keychain.calls if c[1] == "add-generic-password"]
-    assert add == [["security", "add-generic-password", "-a", "deid", "-s", "deid-session",
-                    "-w", key, "-U"]]
+    assert not any(key in a for c in keychain.calls for a in c)    # never on a command line
+    add = [i for c, i in zip(keychain.calls, keychain.inputs) if c == ["security", "-i"]]
+    assert add == [f"add-generic-password -U -a deid -s deid-session -w {key}\n".encode()]
     assert session.load_session_vault().restore(tok) == "홍길동"
     assert ["security", "find-generic-password", "-a", "deid", "-s", "deid-session",
             "-w"] in keychain.calls
@@ -276,3 +276,143 @@ def test_count_and_unknown_tokens(home):
     text = f"{t}와 {t}, 그리고 [이름7]과 [메모1]"
     assert session.count_tokens(text, v) == 2
     assert session.unknown_tokens(text, v, cfg) == 1
+
+
+# ---------------------------------------------------------------------- regression: ux fixes
+
+
+def _locked(keychain, code=36):
+    """Make every `security` call fail like a locked login Keychain."""
+    real = keychain.__call__
+
+    def run(args, *, input=None, timeout=None):
+        if args[0] == "security":
+            keychain.calls.append(list(args))
+            return __import__("subprocess").CompletedProcess(args, code, b"", b"locked")
+        return real(args, input=input, timeout=timeout)
+
+    return run
+
+
+@pytest.mark.parametrize("code", [36, 51, 128])
+def test_mac_keychain_error_wipes_session_locked_keychain_keeps_vault(keychain, home, monkeypatch,
+                                                                     code):
+    v = Vault()
+    tok = v.token_for("PERSON", "최유나", "이름")
+    session.save_session_vault(v)
+    monkeypatch.setattr(mac, "run", _locked(keychain, code))
+    with pytest.raises(session.SessionError, match="키체인"):
+        session.load_session_vault()
+    with pytest.raises(session.SessionError):
+        with session.open_session() as s:
+            s.token_for("PERSON", "김민서", "이름")
+    assert session.vault_file().exists() and session.meta_file().exists()
+    assert not session.key_file().exists()           # no second key was created
+    monkeypatch.setattr(mac, "run", keychain)         # unlocked again
+    assert session.load_session_vault().restore(tok) == "최유나"
+
+
+def test_mac_keychain_error_wipes_session_timeout_and_missing_item(keychain, home, monkeypatch):
+    v = Vault()
+    v.token_for("PERSON", "최유나", "이름")
+    session.save_session_vault(v)
+
+    def timeout(args, *, input=None, timeout=None):
+        raise mac.MacError("'security' 명령이 응답하지 않습니다 (timed out: security)")
+
+    monkeypatch.setattr(mac, "run", timeout)
+    with pytest.raises(session.SessionError):
+        session.load_session_vault()
+    assert session.vault_file().exists()
+    monkeypatch.setattr(mac, "run", keychain)
+    keychain.keychain.clear()                         # item really gone (exit 44): start fresh
+    assert len(session.load_session_vault()) == 0
+    assert not session.vault_file().exists()
+
+
+def test_mac_keychain_error_wipes_session_second_key_still_opens(keychain, home, monkeypatch):
+    """A key file made while the Keychain was unusable must keep working afterwards."""
+    keychain.keychain[("deid", "deid-session")] = "ab" * 32      # an old Keychain key
+    monkeypatch.setattr(mac, "run", _locked(keychain))
+    v = Vault()
+    tok = v.token_for("PERSON", "최유나", "이름")
+    session.save_session_vault(v)                     # no vault yet: falls back to a key file
+    assert session.key_file().exists()
+    monkeypatch.setattr(mac, "run", keychain)
+    assert session.load_session_vault().restore(tok) == "최유나"
+
+
+def test_security_session_never_expires_on_disk_purge(home, monkeypatch):
+    v = Vault()
+    v.token_for("PERSON", "김민서", "이름")
+    session.save_session_vault(v)
+    assert session.purge_expired_session() is False           # fresh: kept
+    assert session.vault_file().exists()
+    session.meta_file().write_text(json.dumps({"created": time.time() - 13 * 3600}))
+    fcntl = pytest.importorskip("fcntl")
+    with open(session.lock_file(), "w") as f:                 # another deid command is busy
+        fcntl.flock(f, fcntl.LOCK_EX)
+        assert session.purge_expired_session() is False
+    assert session.vault_file().exists()
+    assert session.purge_expired_session() is True
+    for p in (session.vault_file(), session.meta_file(), session.key_file()):
+        assert not p.exists()
+    assert session.purge_expired_session() is False
+
+
+def test_security_session_never_expires_on_disk_purge_keychain(keychain, home):
+    v = Vault()
+    v.token_for("PERSON", "김민서", "이름")
+    session.save_session_vault(v)
+    session.meta_file().write_text(json.dumps({"created": time.time() - 13 * 3600}))
+    assert session.purge_expired_session() is True
+    assert ("deid", "deid-session") not in keychain.keychain   # the key goes too
+
+
+def test_security_session_never_expires_on_disk_lazy_expiry_deletes_key(home):
+    v = Vault()
+    v.token_for("PERSON", "김민서", "이름")
+    session.save_session_vault(v)
+    session.meta_file().write_text(json.dumps({"created": time.time() - 13 * 3600}))
+    assert len(session.load_session_vault()) == 0
+    assert not session.key_file().exists()
+
+
+def test_security_deid_folders_world_readable_private_dirs(home, monkeypatch, tmp_path):
+    import os
+
+    old = os.umask(0o022)
+    try:
+        deep = tmp_path / "a" / "b" / "c"
+        session.make_private_dir(deep)
+        for d in (tmp_path / "a", tmp_path / "a" / "b", deep):
+            assert mode(d) == 0o700
+        loose = tmp_path / "loose"
+        loose.mkdir()
+        loose.chmod(0o755)
+        session.make_private_dir(loose)
+        assert mode(loose) == 0o755                       # existing: untouched by default
+        assert session.loose_permissions(loose)
+        session.make_private_dir(loose, tighten=True)
+        assert mode(loose) == 0o700 and not session.loose_permissions(loose)
+        monkeypatch.setenv("DEID_DIR", str(tmp_path / "Deid"))
+        (tmp_path / "Deid" / "in").mkdir(parents=True)
+        (tmp_path / "Deid").chmod(0o755)
+        (tmp_path / "Deid" / "in").chmod(0o755)
+        session.prepare_work_dir(tmp_path / "Deid" / "in")
+        assert mode(tmp_path / "Deid") == 0o700 and mode(tmp_path / "Deid" / "in") == 0o700
+        (tmp_path / "file").write_text("x")
+        with pytest.raises(OSError):
+            session.make_private_dir(tmp_path / "file")
+    finally:
+        os.umask(old)
+
+
+def test_security_deid_folders_world_readable_never_tightens_home(home, monkeypatch, tmp_path):
+    fake_home = tmp_path / "userhome"
+    fake_home.mkdir()
+    fake_home.chmod(0o755)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("DEID_DIR", str(fake_home))      # a careless DEID_DIR=~
+    session.prepare_work_dir(fake_home / "in")
+    assert mode(fake_home) == 0o755 and mode(fake_home / "in") == 0o700

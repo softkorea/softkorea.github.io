@@ -594,3 +594,404 @@ def test_names_wrapped_inside_a_word_across_lines(tmp_path):
     assert "님은혈압안정" in flat and "today" in flat
     assert text.count("[이름") >= 3          # placeholders are extractable text
     assert rep.counts["PERSON"] <= 4         # seam findings are not double counted
+
+
+# ---------------------------------------------------------------------------------------------
+# Red-team regressions
+# ---------------------------------------------------------------------------------------------
+
+
+def _image_samples(path: Path) -> list[bytes]:
+    d = fitz.open(str(path))
+    out = []
+    for x in range(1, d.xref_length()):
+        try:
+            if d.xref_get_key(x, "Subtype") == ("name", "/Image"):
+                out.append(fitz.Pixmap(d, x).samples)
+        except Exception:  # noqa: BLE001
+            pass
+    d.close()
+    return out
+
+
+def _orphan_pages(path: Path) -> list[int]:
+    d = fitz.open(str(path))
+    live = {p.xref for p in d}
+    out = [x for x in range(1, d.xref_length())
+           if d.xref_get_key(x, "Type") == ("name", "/Page") and x not in live]
+    d.close()
+    return out
+
+
+def _all_streams(path: Path) -> bytes:
+    d = fitz.open(str(path))
+    parts = []
+    for x in range(1, d.xref_length()):
+        try:
+            if d.xref_is_stream(x):
+                parts.append(d.xref_stream(x) or b"")
+            else:
+                parts.append(d.xref_object(x, compressed=True).encode("latin-1", "replace"))
+        except Exception:  # noqa: BLE001
+            pass
+    d.close()
+    return b"\n".join(parts)
+
+
+@needs_ocr
+@pytest.mark.parametrize("kind", ["openaction", "named_dest", "widget"])
+def test_file_leaks_01_rebuilt_scan_page_leaves_no_orphan(tmp_path, kind):
+    """file_leaks-01: the original page of a rebuilt scan stayed in the file (with its
+    unredacted scan) when an open action, a named destination or a form field referred to it."""
+    img = _scan_image(["환자명: 하은별", "연락처 010-2468-1357"], size=(1240, 520))
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_image(fitz.Rect(20, 20, 575, 300), stream=_png(img))
+    pxref = page.xref
+    if kind == "widget":
+        w = fitz.Widget()
+        w.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+        w.field_name = "memo"
+        w.field_value = "x"
+        w.rect = fitz.Rect(400, 700, 500, 720)
+        page.add_widget(w)
+    doc.new_page(width=595, height=842).insert_text((72, 72), "page two", fontname="helv")
+    cat = doc.pdf_catalog()
+    if kind == "openaction":
+        doc.xref_set_key(cat, "OpenAction", f"[{pxref} 0 R /Fit]")
+    elif kind == "named_dest":
+        doc.xref_set_key(cat, "Names", f"<</Dests<</Names[(scan)[{pxref} 0 R /Fit]]>>>>")
+    src, dst = tmp_path / "in.pdf", tmp_path / "out.pdf"
+    doc.save(str(src))
+    original = _image_samples(src)
+    run(src, dst)
+    assert not any(s in original for s in _image_samples(dst))
+    assert _orphan_pages(dst) == []
+    out = fitz.open(str(dst))
+    if kind == "openaction":   # still a valid action, now pointing at the rebuilt page
+        assert out.xref_get_key(out.pdf_catalog(), "OpenAction")[1].startswith(f"[{out[0].xref} 0 R")
+    out.close()
+
+
+@needs_ocr
+def test_file_leaks_01_fallback_page_old_content_stream_is_gone(tmp_path):
+    """file_leaks-01: a text page rebuilt because its /ActualText could not be removed kept the
+    old content stream alive through /OpenAction."""
+    src = _actualtext_pdf(tmp_path / "in.pdf")
+    doc = fitz.open(str(src))
+    doc.xref_set_key(doc.pdf_catalog(), "OpenAction", f"[{doc[0].xref} 0 R /Fit]")
+    doc.save(str(tmp_path / "in2.pdf"))
+    rep = run(tmp_path / "in2.pdf", tmp_path / "out.pdf")
+    assert any("그림으로 바꿨습니다" in w for w in rep.warnings)
+    assert b"John Smith" not in _all_streams(tmp_path / "out.pdf")
+    assert _orphan_pages(tmp_path / "out.pdf") == []
+
+
+def test_file_leaks_01_page_orphaned_in_the_input_is_emptied(tmp_path):
+    """file_leaks-01: a page deleted in an editor but still referenced is never processed: it
+    is emptied (and the reference moved to a live page)."""
+    b = Pdf()
+    b.new_page()
+    b.text((72, 100), "검사 결과 정상")
+    b.new_page()
+    b.text((72, 100), "환자 하은별 님 연락처 010-2468-1357")
+    gone = b.page.xref
+    b.doc.delete_page(1)
+    b.doc.xref_set_key(b.doc.pdf_catalog(), "OpenAction", f"[{gone} 0 R /Fit]")
+    src = b.save(tmp_path / "in.pdf")
+    assert _orphan_pages(src)
+    run(src, tmp_path / "out.pdf")
+    assert _orphan_pages(tmp_path / "out.pdf") == []
+    out = fitz.open(str(tmp_path / "out.pdf"))
+    assert out.page_count == 1
+    out.close()
+
+
+def _ocr_page(path: Path, pno: int) -> str:
+    return compact(_ocr_text(_page_image(path, pno, dpi=150)))
+
+
+@needs_ocr
+def test_file_leaks_02_stencil_smask_and_outlined_text_are_checked(tmp_path):
+    """file_leaks-02: stencil-mask images, soft-masked (transparent) images and text drawn as
+    vector outlines on text pages were never OCR'd as displayed."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    f = ImageFont.truetype(str(NANUM), 48)
+    lines = ["진료의뢰서", "환자명: 하은별", "연락처 010-2233-4455"]
+
+    def draw(mode, size, bg, fg):
+        im = Image.new(mode, size, bg)
+        d = ImageDraw.Draw(im)
+        for i, ln in enumerate(lines):
+            d.text((80, 80 + i * 200), ln, font=f, fill=fg)
+        return im
+
+    doc = fitz.open()
+    # A: stencil mask (/ImageMask, 1-bit) + a real text footer -> a "text page"
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 820), "Scanned p.1", fontname="helv", fontsize=8)
+    W, H = 1654, 800
+    x = doc.get_new_xref()
+    doc.update_object(x, f"<</Type/XObject/Subtype/Image/Width {W}/Height {H}/ImageMask true"
+                         f"/BitsPerComponent 1/Decode[0 1]>>")
+    doc.update_stream(x, draw("1", (W, H), 1, 0).tobytes())
+    rx = int(doc.xref_get_key(page.xref, "Resources")[1].split()[0])
+    doc.xref_set_key(rx, "XObject", f"<</Im1 {x} 0 R>>")
+    c = doc.get_new_xref()
+    doc.update_object(c, "<<>>")
+    doc.update_stream(c, b"q 0 g 555 0 0 268 20 500 cm /Im1 Do Q")
+    cont = doc.xref_get_key(page.xref, "Contents")
+    arr = cont[1] if cont[0] == "array" else f"[{cont[1]}]"
+    doc.xref_set_key(page.xref, "Contents", arr[:-1] + f" {c} 0 R]")
+    # B: black text on a transparent background (/SMask)
+    alpha = draw("L", (1654, 800), 0, 255)
+    black = Image.new("L", alpha.size, 0)
+    buf = io.BytesIO()
+    Image.merge("RGBA", (black, black, black, alpha)).save(buf, "PNG")
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 820), "Scanned p.2", fontname="helv", fontsize=8)
+    page.insert_image(fitz.Rect(20, 30, 575, 298), stream=buf.getvalue())
+    # C: text drawn as filled vector shapes
+    bm = draw("1", (1654, 800), 1, 0)
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 820), "Scanned p.3", fontname="helv", fontsize=8)
+    sh = page.new_shape()
+    px = bm.load()
+    for y in range(0, bm.height):
+        xx = 0
+        while xx < bm.width:
+            if px[xx, y] == 0:
+                x0 = xx
+                while xx < bm.width and px[xx, y] == 0:
+                    xx += 1
+                sh.draw_rect(fitz.Rect(20 + x0 * 0.33, 30 + y * 0.33, 20 + xx * 0.33,
+                                       30 + (y + 1) * 0.33))
+            else:
+                xx += 1
+    sh.finish(color=None, fill=(0, 0, 0), width=0)
+    sh.commit()
+    src, dst = tmp_path / "masked.pdf", tmp_path / "out.pdf"
+    doc.save(str(src))
+    for pno in range(3):
+        assert "010-2233-4455" in _ocr_page(src, pno), "test setup: OCR cannot read the input"
+    rep = run(src, dst)
+    for pno in range(3):
+        seen = _ocr_page(dst, pno)
+        assert "010-2233-4455" not in seen and "하은별" not in seen, pno
+    assert any("masked image" in w for w in rep.warnings)        # stencil + outlines: rebuilt
+    out = fitz.open(str(dst))
+    assert "Scanned p.2" in out[1].get_text()                    # transparent image: in place
+    out.close()
+
+
+def test_file_leaks_02_outline_regions_ignore_cell_shading(tmp_path):
+    """file_leaks-02: plain filled rectangles (table shading) are not outlined text."""
+    b = Pdf()
+    page = b.new_page()
+    b.text((72, 60), "검사 결과")
+    for i in range(60):
+        page.draw_rect(fitz.Rect(72, 100 + i * 10, 300, 108 + i * 10), color=None,
+                       fill=(0.9, 0.9, 0.9))
+    job = P._PdfJob(b.doc, fitz, Detector(make_cfg()), Anonymizer(make_cfg()), make_cfg(),
+                    P.Report())
+    assert job._outline_regions(page) == []
+
+
+def test_file_leaks_03_spaced_variants():
+    """file_leaks-03: letter-spaced rows get joined variants with exact character boxes."""
+    def row(text):
+        chars = [P._Char(c, None if c == " " else (i, 0, i + 1, 1), i) for i, c in enumerate(text)]
+        return P._Row(0, chars)
+    texts = [r.text for r in P._spaced_variants([row("성 명 하 은 별"),
+                                                  row("주민등록번호 8 5 0 3 1 5 - 1 2 3 4 5 6 1"),
+                                                  row("연 락 처 0 1 0 - 2 4 6 8 - 1 3 5 7"),
+                                                  row("상기 환자를 의뢰합니다.")])]
+    assert "성명 하은별" in texts
+    assert "주민등록번호 850315-1234561" in texts
+    assert "연락처 010-2468-1357" in texts
+    assert not any(t.startswith("상기") for t in texts)
+    assert all(r.seam for r in P._spaced_variants([row("성 명 하 은 별")]))
+
+
+def test_file_leaks_03_letter_spaced_form_cells(tmp_path):
+    """file_leaks-03: distributed-alignment name cells and one-digit-per-box numbers."""
+    b = Pdf()
+    b.new_page()
+
+    def distributed(text, x0, x1, y):
+        step = (x1 - x0 - 11) / (len(text) - 1)
+        for i, ch in enumerate(text):
+            b.text((x0 + i * step, y), ch)
+
+    def boxed(digits, x0, y):
+        for i, ch in enumerate(digits):
+            b.text((x0 + i * 16, y), ch)
+
+    distributed("성명", 70, 150, 110)
+    distributed("하은별", 200, 300, 110)
+    b.text((70, 140), "주민등록번호")
+    boxed("850315-1234561", 170, 140)
+    distributed("연락처", 70, 150, 170)
+    boxed("010-2468-1357", 170, 170)
+    b.text((70, 220), "상기 환자를 의뢰합니다.")
+    src = b.save(tmp_path / "form.pdf")
+    rep = run(src, tmp_path / "out.pdf")
+    out = compact(all_text(tmp_path / "out.pdf"))
+    for v in ("하은별", "850315-1234561", "010-2468-1357"):
+        assert v not in out
+    assert "상기환자를의뢰합니다." in out and "성명" in out
+    assert rep.counts == {"PERSON": 1, "RRN": 1, "PHONE": 1}      # counted once each
+
+
+def test_file_leaks_07_pdfa3_associated_file_is_removed(tmp_path):
+    """file_leaks-07: an attachment listed in the catalog /AF survived embfile_del()."""
+    payload = "이름,연락처,주민등록번호\n하은별,010-4321-8765,850315-1234561\n".encode("utf-8")
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Lab summary - see attached data file.", fontname="helv")
+    ef = doc.get_new_xref()
+    doc.update_object(ef, "<</Type/EmbeddedFile/Subtype/text#2Fcsv>>")
+    doc.update_stream(ef, payload)
+    fs = doc.get_new_xref()
+    doc.update_object(fs, f"<</Type/Filespec/F(labs.csv)/UF(labs.csv)/AFRelationship/Data"
+                          f"/EF<</F {ef} 0 R/UF {ef} 0 R>>>>")
+    af_only = doc.get_new_xref()                 # a second file only in a page's /AF
+    doc.update_object(af_only, "<</Type/EmbeddedFile>>")
+    doc.update_stream(af_only, b"name,phone\nHa Eunbyul,010-4321-8765\n")
+    fs2 = doc.get_new_xref()
+    doc.update_object(fs2, f"<</Type/Filespec/F(x.csv)/EF<</F {af_only} 0 R>>>>")
+    cat = doc.pdf_catalog()
+    doc.xref_set_key(cat, "Names", f"<</EmbeddedFiles<</Names[(labs.csv) {fs} 0 R]>>>>")
+    doc.xref_set_key(cat, "AF", f"[{fs} 0 R]")
+    doc.xref_set_key(page.xref, "AF", f"[{fs2} 0 R]")
+    src = tmp_path / "pdfa3.pdf"
+    doc.save(str(src))
+    rep = run(src, tmp_path / "out.pdf")
+    blob = _all_streams(tmp_path / "out.pdf")
+    assert payload not in blob and b"010-4321-8765" not in blob
+    assert any("2 attached/embedded file(s) removed" in w for w in rep.warnings)
+
+
+def test_file_leaks_07_verification_counts_leftover_embedded_files(tmp_path):
+    """file_leaks-07: an embedded-file stream left anywhere makes verification fail."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "x", fontname="helv")
+    ef = doc.get_new_xref()
+    doc.update_object(ef, "<</Type/EmbeddedFile>>")
+    doc.update_stream(ef, b"data")
+    doc.xref_set_key(doc.pdf_catalog(), "Extra", f"{ef} 0 R")
+    assert P._leftover_objects(fitz.open("pdf", doc.tobytes())) == 1
+
+
+def test_file_leaks_08_signature_value_is_removed(tmp_path):
+    """file_leaks-08: the signature dictionary kept the signer's name and certificate."""
+    name, email = "하은별", "eunbyul.ha@example.com"
+    blob = ("CN=" + name + ",E=" + email).encode("utf-8") + bytes(range(40))
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Consent form. Signed electronically.", fontname="helv")
+    sig = doc.get_new_xref()
+    name_hex = name.encode("utf-16-be").hex()
+    doc.update_object(sig, f"<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached"
+                           f"/Name<FEFF{name_hex}>/Location(Seoul)/ContactInfo(010-4321-8765)"
+                           f"/M(D:20240301090000+09'00')/Contents<{blob.hex()}>"
+                           f"/ByteRange[0 0 0 0]>>")
+    w = doc.get_new_xref()
+    doc.update_object(w, f"<</Type/Annot/Subtype/Widget/FT/Sig/T(Signature1)/Rect[0 0 0 0]"
+                         f"/F 132/P {page.xref} 0 R/V {sig} 0 R>>")
+    doc.xref_set_key(page.xref, "Annots", f"[{w} 0 R]")
+    doc.xref_set_key(doc.pdf_catalog(), "AcroForm", f"<</Fields[{w} 0 R]/SigFlags 3>>")
+    doc.xref_set_key(doc.pdf_catalog(), "Perms", f"<</DocMDP {sig} 0 R>>")
+    src = tmp_path / "signed.pdf"
+    doc.save(str(src))
+    rep = run(src, tmp_path / "out.pdf")
+    out = fitz.open(str(tmp_path / "out.pdf"))
+    objs = "".join(out.xref_object(x, compressed=True) for x in range(1, out.xref_length())
+                   if not out.xref_is_stream(x)).upper()
+    out.close()
+    assert name_hex.upper() not in objs
+    assert blob.hex().upper()[:40] not in objs
+    assert any("digital signature" in w for w in rep.warnings)
+
+
+def test_file_leaks_09_hidden_and_print_only_annotations_are_removed(tmp_path):
+    """file_leaks-09: Hidden / NoView annotations kept appearance-only text that text
+    extraction never sees; visible ones are still processed normally."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Lab report - results within normal limits.", fontname="helv")
+    font_xref = page.get_fonts()[0][0]
+    annots = []
+    for flags, text in ((2, "Patient phone 010-1111-2222"),
+                        (32 | 4, "Printed by staff, tel 010-3333-4444"),
+                        (4, "Reviewed")):
+        ap = doc.get_new_xref()
+        doc.update_object(ap, f"<</Type/XObject/Subtype/Form/BBox[0 0 300 40]"
+                              f"/Resources<</Font<</F1 {font_xref} 0 R>>>>>>")
+        doc.update_stream(ap, f"BT /F1 12 Tf 5 20 Td ({text}) Tj ET".encode())
+        a = doc.get_new_xref()
+        y = 200 + 60 * len(annots)
+        doc.update_object(a, f"<</Type/Annot/Subtype/Stamp/Rect[100 {y} 400 {y + 40}]/F {flags}"
+                             f"/AP<</N {ap} 0 R>>>>")
+        annots.append(a)
+    doc.xref_set_key(page.xref, "Annots", "[" + " ".join(f"{a} 0 R" for a in annots) + "]")
+    src = tmp_path / "report.pdf"
+    doc.save(str(src))
+    rep = run(src, tmp_path / "out.pdf")
+    blob = _all_streams(tmp_path / "out.pdf")
+    assert b"010-1111-2222" not in blob and b"010-3333-4444" not in blob
+    assert b"Reviewed" in blob                                    # visible stamp kept
+    assert any("2 hidden or print-only" in w for w in rep.warnings)
+
+
+def test_file_leaks_unshown_streams_are_verified(tmp_path):
+    """Verification searches streams that no page shows for removed values (e.g. a removed
+    phone number left in an orphaned or unreferenced-by-pages stream)."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "x", fontname="helv")
+    s = doc.get_new_xref()
+    doc.update_object(s, "<<>>")
+    doc.update_stream(s, "메모 하은별 010-4321-8765".encode("utf-16-be"))
+    doc.xref_set_key(doc.pdf_catalog(), "Extra", f"{s} 0 R")
+    out = fitz.open("pdf", doc.tobytes())
+    assert P._unshown_stream_hits(out, {"010-4321-8765"}) == 1
+    assert P._unshown_stream_hits(out, {"010-9999-0000"}) == 0
+    # page content is verified by text extraction, not by this search
+    assert P._unshown_stream_hits(fitz.open("pdf", doc.tobytes()), {"x"}) == 0
+
+
+def test_file_leaks_02_outline_probe_is_grouped_and_cached(tmp_path, monkeypatch):
+    """file_leaks-02: vector shapes are probed per group (a header logo and a footer logo are
+    two small areas, not one page-sized one), and the same logo on every page is OCR'd once."""
+    import math as _m
+
+    from deid.formats import image as I
+
+    b = Pdf()
+    for _ in range(3):
+        page = b.new_page()
+        for cx, cy in ((60, 50), (520, 800)):
+            sh = page.new_shape()
+            for k in range(40):
+                a = k * _m.pi / 20
+                sh.draw_bezier((cx, cy), (cx + 30 * _m.cos(a), cy + 30 * _m.sin(a)),
+                               (cx + 30 * _m.cos(a + 0.4), cy + 30 * _m.sin(a + 0.4)), (cx, cy))
+            sh.finish(color=None, fill=(0.2, 0.4, 0.8))
+            sh.commit()
+        b.text((72, 300), "경과기록 혈압 132/84 mmHg")
+    regions = P._PdfJob(b.doc, fitz, Detector(make_cfg()), Anonymizer(make_cfg()), make_cfg(),
+                        P.Report())._outline_regions(b.doc[0])
+    assert len(regions) == 2 and all(r.width < 80 and r.height < 80 for r in regions)
+    src = b.save(tmp_path / "logos.pdf")
+    sizes = []
+    real = I.redact_image
+
+    def counting(img, *a, **k):
+        sizes.append(img.size)
+        return real(img, *a, **k)
+    monkeypatch.setattr(I, "redact_image", counting)
+    run(src, tmp_path / "out.pdf")
+    assert len(sizes) == 2          # two different logos, OCR'd once each for three pages

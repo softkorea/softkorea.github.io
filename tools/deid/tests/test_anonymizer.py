@@ -298,3 +298,10 @@ def test_deidentify_with_explicit_detector_and_shared_vault():
     out, report = deidentify("김민준님과 이서연님", vault=vault, detector=det)
     assert out == "[이름2]님과 [이름1]님"
     assert report.total == 2
+
+
+def test_tl03_fullwidth_values_mask_and_generalize():
+    from deid.anonymizer import generalize_value, mask_value
+    assert mask_value("PHONE", "０１０－６６２１－３０９８") == "０１０－****－３０９８"
+    assert generalize_value("BIRTHDATE", "１９８５．０３．１５", "생년월일") == ("1985년생", "generalize")
+    assert generalize_value("BIRTHDATE", "1979.11.23生", "생년월일") == ("1979년생", "generalize")

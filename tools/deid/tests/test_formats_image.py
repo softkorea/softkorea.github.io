@@ -491,22 +491,41 @@ def test_redact_image_with_fake_vision_engine(monkeypatch):
 
 def test_recheck_covers_text_found_only_in_second_pass(monkeypatch):
     rounds = []
+    name = _word_line([("환자명:", 10, 80), ("홍길동", 90, 160)], y=10)
 
     def fake_ocr(img, cfg=None, engine=None):
         rounds.append(1)
         if len(rounds) == 1:
-            return ocr.OcrResult([_word_line([("metformin", 10, 100)])], "tesseract")
-        return ocr.OcrResult([_word_line([("metformin", 10, 100)]),
+            return ocr.OcrResult([name], "tesseract")
+        return ocr.OcrResult([name,
                               _word_line([("연락처", 10, 70), ("010-2345-6789", 80, 220)], y=60)],
                              "tesseract")
     monkeypatch.setattr(I, "ocr_image", fake_ocr)
+    monkeypatch.setattr(I, "detect_rotation", lambda img, cfg=None: 0)
     cfg = default_config()
     cfg.ocr["verify"] = 2
     out, report = I.redact_image(Image.new("RGB", (300, 100), "white"), Detector(cfg), cfg)
     assert out.getpixel((150, 70)) == (0, 0, 0)
-    assert report.counts == {E.PHONE: 1}
+    assert report.counts == {E.PERSON: 1, E.PHONE: 1}
     assert any("재검사" in w and "1" in w for w in report.warnings)
     assert len(rounds) == 3                        # stops after a clean round
+
+
+def test_over_mask_16_no_recheck_when_nothing_was_covered(monkeypatch):
+    """over_mask-16: an image in which nothing was covered is unchanged; OCR'ing it again can
+    only repeat the first pass, so it is OCR'd once."""
+    rounds = []
+
+    def fake_ocr(img, cfg=None, engine=None):
+        rounds.append(1)
+        return ocr.OcrResult([_word_line([("metformin", 10, 100), ("500mg", 110, 170)])],
+                             "tesseract")
+    monkeypatch.setattr(I, "ocr_image", fake_ocr)
+    monkeypatch.setattr(I, "detect_rotation", lambda img, cfg=None: 0)
+    cfg = default_config()
+    out, report = I.redact_image(Image.new("RGB", (300, 100), "white"), Detector(cfg), cfg)
+    assert len(rounds) == 1 and report.counts == {}
+    assert I.NO_TEXT_WARNING not in report.warnings
 
 
 def test_working_image_modes():
@@ -516,3 +535,311 @@ def test_working_image_modes():
     assert I.to_working_image(Image.new("CMYK", (4, 4))).mode == "RGB"
     i16 = Image.new("I;16", (4, 4), 65535)
     assert I.to_working_image(i16).getpixel((0, 0)) == 255
+
+
+# ---------------------------------------------------------------------- red-team regressions
+
+
+@needs_ocr
+def test_file_leaks_04_sideways_picture_is_checked_upright(tmp_path):
+    """file_leaks-04: a document photographed / scanned sideways (no EXIF orientation) used to
+    pass through unchanged with no warning."""
+    c = Canvas((1000, 330))
+    c.text((30, 30), "환자명: 하은별", size=32)
+    c.text((30, 130), "연락처 010-2233-4455", size=32)
+    c.text((30, 230), "주민등록번호 850315-1234561", size=32)
+    src, dst = tmp_path / "sideways.png", tmp_path / "sideways_out.png"
+    c.img.rotate(90, expand=True).save(src)
+    cfg = make_cfg()
+    report = I.process(src, dst, Detector(cfg), Anonymizer(cfg), cfg)
+    assert report.counts.get(E.PHONE) == 1 and report.counts.get(E.RRN) == 1
+    assert any("90" in w and "upright" in w for w in report.warnings)
+    upright = Image.open(dst).rotate(-90, expand=True)
+    assert upright.size == c.img.size
+    assert not leaked(read_all(upright, scales=(1,)), ["010-2233-4455", "850315-1234561"])
+
+
+def test_file_leaks_04_rotation_maps_back_onto_the_picture(monkeypatch):
+    """file_leaks-04: covering done on the upright copy lands on the right pixels."""
+    img = Image.new("RGB", (100, 300), "white")      # upright copy is 300 x 100
+
+    def fake_ocr(im, cfg=None, engine=None):
+        if im.size == (300, 100):                     # upright: a phone number at x 100-250
+            return ocr.OcrResult([_word_line([("연락처", 10, 90), ("010-2345-6789", 100, 250)],
+                                              y=40)], "tesseract")
+        return ocr.OcrResult([], "tesseract")
+    monkeypatch.setattr(I, "ocr_image", fake_ocr)
+    monkeypatch.setattr(I, "detect_rotation", lambda im, cfg=None: 90)
+    cfg = default_config()
+    out, report = I.redact_image(img, Detector(cfg), cfg)
+    assert report.counts == {E.PHONE: 1} and out.size == (100, 300)
+    # upright (x, y) = (175, 50) is original (50, 300 - 175) after turning back
+    assert out.getpixel((50, 125)) == (0, 0, 0)
+    assert out.getpixel((50, 250)) == (255, 255, 255)     # 연락처 label itself stays
+
+
+def test_file_leaks_04_no_orientation_check_for_confident_text(monkeypatch):
+    """file_leaks-04: readable, confident tesseract output does not pay for OSD."""
+    calls = []
+    monkeypatch.setattr(I, "ocr_image", lambda im, cfg=None, engine=None: ocr.OcrResult(
+        [_word_line([("metformin", 10, 100)])], "tesseract"))
+    monkeypatch.setattr(I, "detect_rotation", lambda im, cfg=None: calls.append(1) or 0)
+    cfg = default_config()
+    I.redact_image(Image.new("RGB", (200, 60), "white"), Detector(cfg), cfg)
+    assert calls == []
+    cfg.ocr["orientation"] = True
+    I.redact_image(Image.new("RGB", (200, 60), "white"), Detector(cfg), cfg)
+    assert calls == [1]
+
+
+def _kakao(name="하은별", sender_twice=False):
+    c = Canvas((720, 560), bg=(178, 199, 217))
+    c.draw.rectangle((0, 0, 720, 60), fill=(160, 180, 200))
+    c.text((300, 15), name, size=26, mark=[name])
+    c.draw.ellipse((20, 80, 80, 140), fill=(240, 200, 150))
+    c.text((95, 80), name, size=22, fill=(60, 60, 60), mark=[name])
+    c.draw.rounded_rectangle((95, 115, 640, 190), 12, fill="white")
+    c.text((110, 125), "선생님 어제 처방받은 약 먹고 어지러워요", size=22)
+    c.text((110, 155), "오후에 다시 가도 될까요?", size=22)
+    c.draw.rounded_rectangle((330, 220, 700, 270), 12, fill=(254, 229, 0))
+    c.text((345, 232), "네 오후 3시에 오세요", size=22)
+    return c
+
+
+@needs_ocr
+def test_file_leaks_15_chat_title_and_sender_name_covered(tmp_path):
+    """file_leaks-15: the chat partner's bare name (title bar, sender label) is covered."""
+    c = _kakao()
+    src, dst = tmp_path / "kakao.png", tmp_path / "kakao_out.png"
+    c.img.save(src)
+    cfg = make_cfg()
+    report = I.process(src, dst, Detector(cfg), Anonymizer(cfg), cfg)
+    out = Image.open(dst)
+    for box in c.boxes["하은별"]:
+        assert black_share(out, box) > 0.9
+    assert "하은별" not in re.sub(r"\s+", "", read_all(out, scales=(1,)))
+    assert "어지러워요" in re.sub(r"\s+", "", read_all(out, scales=(1,)))
+    assert report.counts.get(E.PERSON) == 2
+
+
+def _line_at(text, x, y, h=24, conf=90.0):
+    words, pos = [], x
+    for t in text.split(" "):
+        w = 22 * len(t)
+        words.append(OcrWord(t, (pos, y, pos + w, y + h), conf))
+        pos += w + 10
+    return OcrLine.from_words(words, "test")
+
+
+def test_file_leaks_15_bare_name_rules():
+    """file_leaks-15: a lone name-shaped line counts when repeated or in the title bar; ordinary
+    words, verbs, lines with other text on the row, and single occurrences mid-picture don't."""
+    size = (720, 560)
+    title = _line_at("하 은 별", 300, 15)
+    sender = _line_at("하은별", 95, 80)
+    assert I.bare_name_spans([title], size) == {0: [(0, 5)]}           # title bar
+    assert I.bare_name_spans([sender], size) == {}                      # once, mid-picture
+    assert I.bare_name_spans([sender, _line_at("하은별", 95, 300)], size) == {0: [(0, 3)],
+                                                                         1: [(0, 3)]}
+    for word in ("고혈압", "고혈안", "오세요", "강아지", "상병명", "주세요", "진료의", "하은", "이메일"):
+        assert I.bare_name_spans([_line_at(word, 300, 15)], size) == {}, word
+    # another word on the same row: a table cell / label, not a lone name
+    row = [_line_at("하은별", 300, 15), _line_at("외래", 400, 15)]
+    assert I.bare_name_spans(row, size) == {}
+    far = [_line_at("하은별", 300, 15), _line_at("2024-03-01", 650, 15)]   # anywhere on the row
+    assert I.bare_name_spans(far, size) == {}
+    icons = [_line_at("하은별", 300, 15), _line_at("Q", 650, 15), _line_at("<", 10, 15)]
+    assert I.bare_name_spans(icons, size) == {0: [(0, 3)]}              # icon noise ignored
+    # wired into detect_lines (and switchable)
+    det = Detector(default_config())
+    spans = I.detect_lines([title], det, size=size)[0]
+    assert [(s.entity, s.source) for s in spans] == [(E.PERSON, I.BARE_NAME_SOURCE)]
+    cfg = default_config()
+    cfg.ocr["bare_names"] = False
+    assert I.detect_lines([title], Detector(cfg), size=size)[0] == []
+    cfg = default_config()
+    cfg.allowlist = ["하은별"]
+    assert I.detect_lines([title], Detector(cfg), size=size)[0] == []
+
+
+CODE39 = {"0": "nnnwwnwnn", "1": "wnnwnnnnw", "2": "nnwwnnnnw", "3": "wnwwnnnnn",
+          "4": "nnnwwnnnw", "5": "wnnwwnnnn", "6": "nnwwwnnnn", "7": "nnnwnnwnw",
+          "8": "wnnwnnwnn", "9": "nnwwnnwnn", "-": "nwnnnnwnw", "*": "nwnnwnwnn"}
+
+
+def _code39(draw, x, y, text, h=90, narrow=3, wide=8):
+    x0 = x
+    for ch in f"*{text}*":
+        for i, el in enumerate(CODE39[ch]):
+            w = wide if el == "w" else narrow
+            if i % 2 == 0:
+                draw.rectangle((x, y, x + w - 1, y + h), fill="black")
+            x += w
+        x += narrow
+    return (x0, y, x, y + h)
+
+
+def _matrix_code(draw, x, y, n=29, m=6, seed=7):
+    import random
+    rng = random.Random(seed)
+    for r in range(n):
+        for c in range(n):
+            if rng.random() < 0.5:
+                draw.rectangle((x + c * m, y + r * m, x + c * m + m - 1, y + r * m + m - 1),
+                               fill="black")
+    for fx, fy in ((0, 0), (n - 7, 0), (0, n - 7)):        # QR-style finder patterns
+        for k, col in ((7, "black"), (5, "white"), (3, "black")):
+            o = (7 - k) // 2
+            draw.rectangle((x + (fx + o) * m, y + (fy + o) * m, x + (fx + o + k) * m - 1,
+                            y + (fy + o + k) * m - 1), fill=col)
+    return (x, y, x + n * m, y + n * m)
+
+
+def test_file_leaks_16_find_codes_bars_and_matrix_not_text():
+    """file_leaks-16: 1-D barcodes and 2-D (QR-like) codes are found; text, a table grid and
+    a bar chart are not."""
+    img = Image.new("RGB", (900, 400), "white")
+    d = ImageDraw.Draw(img)
+    bar = _code39(d, 20, 20, "850315-1234561")
+    qr = _matrix_code(d, 600, 180)
+    found = I.find_codes(img)
+    assert any(I._inside_share(bar, f) > 0.95 for f in found)
+    assert any(I._inside_share(qr, f) > 0.95 for f in found)
+    assert len(found) == 2
+    plain = Canvas((900, 300))
+    for i in range(5):
+        plain.text((20, 20 + 50 * i), "경과기록 혈압 132/84 mmHg metformin 500mg 1111 lllll", size=22)
+    for x in range(0, 900, 90):
+        plain.draw.line((x, 0, x, 300), fill="black")
+    assert I.find_codes(plain.img, ocr.OcrResult([], "x").lines) == [] or HAS_TESSERACT
+    chart = Image.new("RGB", (900, 400), "white")
+    dc = ImageDraw.Draw(chart)
+    for i in range(30):
+        dc.rectangle((20 + i * 28, 380 - 10 * (i % 9 + 3), 38 + i * 28, 380), fill=(40, 90, 200))
+    assert I.find_codes(chart) == []
+
+
+@needs_ocr
+def test_file_leaks_16_barcode_on_label_is_covered(tmp_path):
+    """file_leaks-16: the printed RRN was covered but its barcode still decoded to it."""
+    c = Canvas((760, 260))
+    c.text((20, 15), "환자명: 하은별", size=28)
+    c.text((20, 55), "주민등록번호 850315-1234561", size=28)
+    bar = _code39(c.draw, 20, 120, "850315-1234561")
+    src, dst = tmp_path / "label.png", tmp_path / "label_out.png"
+    c.img.save(src)
+    cfg = make_cfg()
+    report = I.process(src, dst, Detector(cfg), Anonymizer(cfg), cfg)
+    assert black_share(Image.open(dst), bar) > 0.97
+    assert report.counts.get(E.OTHER) == 1 and report.counts.get(E.RRN) == 1
+    assert any("barcode" in w for w in report.warnings)
+    # plain text images get no code warning
+    t = Canvas((760, 120))
+    t.text((20, 40), "혈압 132/84 mmHg metformin 500mg", size=26)
+    _, rep = I.redact_image(t.img, Detector(cfg), cfg)
+    assert E.OTHER not in rep.counts and not any("barcode" in w for w in rep.warnings)
+
+
+def test_file_leaks_16_barcode_modes(monkeypatch):
+    """file_leaks-16: barcodes = "warn" only warns, "off" skips the search."""
+    img = Image.new("RGB", (760, 160), "white")
+    bar = _code39(ImageDraw.Draw(img), 20, 30, "12345678")
+    monkeypatch.setattr(I, "ocr_image", lambda im, cfg=None, engine=None: ocr.OcrResult(
+        [], "tesseract"))
+    monkeypatch.setattr(I, "detect_rotation", lambda im, cfg=None: 0)
+    cfg = default_config()
+    out, rep = I.redact_image(img, Detector(cfg), cfg)
+    assert black_share(out, bar) > 0.97 and rep.counts == {E.OTHER: 1}
+    assert I.NO_TEXT_WARNING not in rep.warnings
+    cfg.ocr["barcodes"] = "warn"
+    out, rep = I.redact_image(img, Detector(cfg), cfg)
+    assert black_share(out, bar) < 0.6 and rep.counts == {}
+    assert any("NOT covered" in w for w in rep.warnings)
+    cfg.ocr["barcodes"] = "off"
+    out, rep = I.redact_image(img, Detector(cfg), cfg)
+    assert not any("barcode" in w for w in rep.warnings)
+
+
+def test_file_leaks_21_colour_under_transparency_is_blanked(tmp_path, monkeypatch):
+    """file_leaks-21: text 'erased to transparent' kept its colour data and reappeared once the
+    alpha channel was ignored."""
+    img = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 50, 300, 100), fill=(255, 255, 255, 0))
+    d.rectangle((20, 60, 200, 90), fill=(0, 0, 0, 0))          # black, but fully transparent
+    d.rectangle((20, 10, 60, 30), fill=(0, 0, 0, 255))          # visible: untouched
+    src, dst = tmp_path / "erased.png", tmp_path / "erased_out.png"
+    img.save(src)
+    monkeypatch.setattr(I, "ocr_image", lambda im, cfg=None, engine=None: ocr.OcrResult(
+        [], "tesseract"))
+    monkeypatch.setattr(I, "detect_rotation", lambda im, cfg=None: 0)
+    cfg = default_config()
+    I.process(src, dst, Detector(cfg), Anonymizer(cfg), cfg)
+    out = Image.open(dst)
+    assert out.mode == "RGBA"
+    assert out.getpixel((100, 75)) == (255, 255, 255, 0)
+    assert out.getpixel((40, 20)) == (0, 0, 0, 255)
+    la = Image.new("LA", (10, 10), (0, 0))
+    assert I.clear_hidden_colour(la).getpixel((5, 5)) == (255, 0)
+    # save_clean also blanks it (frames that did not go through redact_image)
+    I.save_clean([img], tmp_path / "direct.png")
+    assert Image.open(tmp_path / "direct.png").getpixel((100, 75)) == (255, 255, 255, 0)
+
+
+def test_security_image_pixel_bomb_refused_before_decoding(tmp_path, monkeypatch):
+    """security-image-pixel-bomb: page count and total pixels are checked from the headers,
+    before any page is decoded or OCR'd."""
+    called = []
+    real_redact = I.redact_image
+    monkeypatch.setattr(I, "redact_image", lambda *a, **k: called.append(1))
+    src = tmp_path / "bomb.tiff"
+    frames = [Image.new("1", (400, 300), 1) for _ in range(5)]
+    frames[0].save(src, save_all=True, append_images=frames[1:], compression="group4")
+    cfg = default_config()
+    for key, value, msg in (("max_total_pixels", 500_000, "too many pixels"),
+                            ("max_frames", 4, "too many pages"),
+                            ("max_image_pixels", 100_000, "image too large")):
+        cfg.ocr = {key: value}
+        with pytest.raises(I.ImageTooLargeError, match=msg):
+            I.process(src, tmp_path / "out.tiff", Detector(cfg), Anonymizer(cfg), cfg)
+    assert called == [] and not (tmp_path / "out.tiff").exists()
+    assert not list(tmp_path.glob(".deid-*"))
+    # defaults: a 60-page 36 MP file (2.16 G pixels) is over budget; one frame > 100 M too
+    with pytest.raises(I.ImageTooLargeError):
+        I.check_pixels((6000, 6000), None, frames=60, total=60 * 36_000_000)
+    with pytest.raises(I.ImageTooLargeError):
+        I.check_pixels((12000, 9000), None)
+    I.check_pixels((4961, 7016), None, frames=40, total=40 * 4961 * 7016)   # 40 A4 @600dpi
+    with pytest.raises(I.ImageTooLargeError):     # also images from PDFs / DOCX / HWPX
+        real_redact(Image.new("1", (11000, 10000)), Detector(cfg), cfg)
+
+
+def test_security_image_pixel_bomb_tiff_pages_are_streamed(tmp_path, monkeypatch):
+    """security-image-pixel-bomb: a multi-page TIFF is written page by page (only one redacted
+    page is alive at a time) and keeps all its pages."""
+    import gc
+    import weakref
+
+    alive = []
+    monkeypatch.setattr(I, "ocr_image", lambda im, cfg=None, engine=None: ocr.OcrResult(
+        [], "tesseract"))
+    monkeypatch.setattr(I, "detect_rotation", lambda im, cfg=None: 0)
+    real = I.redact_image
+
+    def tracking(img, *a, **k):
+        gc.collect()
+        alive.append(sum(1 for r in refs if r() is not None))
+        out, rep = real(img, *a, **k)
+        refs.append(weakref.ref(out))
+        return out, rep
+    refs: list = []
+    monkeypatch.setattr(I, "redact_image", tracking)
+    src = tmp_path / "scan.tiff"
+    frames = [Image.new("L", (200 + i, 100), 255) for i in range(6)]
+    frames[0].save(src, save_all=True, append_images=frames[1:])
+    cfg = default_config()
+    I.process(src, tmp_path / "out.tif", Detector(cfg), Anonymizer(cfg), cfg)
+    out = Image.open(tmp_path / "out.tif")
+    assert out.n_frames == 6
+    assert [(out.seek(i), out.size)[1] for i in range(6)] == [(200 + i, 100) for i in range(6)]
+    assert max(alive) <= 1

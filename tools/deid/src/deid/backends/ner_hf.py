@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from ..config import Config
 
 INSTALL_HINT = ('the "hf" NER backend needs transformers and torch: '
-                'pip install "deid-kit[ner]"')
+                'pipx inject deid-kit transformers torch (without pipx: pip install "deid-kit[ner]")')
 
 _LOCATION_LABELS = ("LOC", "LC", "LOCATION")
 

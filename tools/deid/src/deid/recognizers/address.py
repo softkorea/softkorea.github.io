@@ -81,6 +81,9 @@ _APT_NAME = rf"[가-힣A-Za-z0-9{re.escape(_MASK)}]{{0,15}}?[ ]?(?:{_alt(_RESIDE
 
 _TAILS = (
     re.compile(r"[ ]?[(（][ ]*[가-힣0-9]{1,10}(?:동|가|리|읍|면)(?:[ ]*,[ ]*[가-힣A-Za-z0-9 ]{1,20})?[ ]*[)）]"),
+    # Phase / block of a complex: "지웰시티 2차", "6차", "F15블록", "3단지"
+    re.compile(rf",?[^\S\n]*(?:[가-힣A-Za-z0-9{re.escape(_MASK)}]{{1,15}}[ ]?)?(?:\d{{1,2}}(?:차|단지)|[A-Z]?\d{{1,3}}블록)"
+               r"(?![가-힣0-9])"),
     re.compile(rf",?[^\S\n]*(?:{_BLDG_NAME}[ ]?)?(?:\d{{1,4}}동[ ]?)?\d{{1,5}}호"),
     re.compile(rf",?[^\S\n]*(?:{_BLDG_NAME}[ ]?)?\d{{1,4}}동(?![가-힣])"),
     re.compile(r",?[^\S\n]*(?:지하[ ]?|B)?\d{1,3}층"),
@@ -89,6 +92,45 @@ _TAILS = (
     re.compile(rf",?[^\S\n]*[가-힣A-Za-z0-9{re.escape(_MASK)}]{{1,15}}[ ]?(?:\d{{1,4}}동[ ]?)?\d{{1,5}}호"),
 )
 _APT_RE = re.compile(rf"(?<![가-힣A-Za-z0-9]){_APT_NAME}[ ]?\d{{1,4}}동[ ]?\d{{1,5}}호")
+
+# An apartment unit on its own ("102동 1503호", "101-1203호"): practically never clinical text
+# (wards are "71병동", rooms "712호"). The span grows to the left over the complex name, its
+# phase/block and any 시/도, 시/군/구, 읍/면/동 words.
+_UNIT_RE = re.compile(r"(?<![0-9A-Za-z])(?:\d{1,4}[ ]?동[ ]?\d{1,5}호|\d{2,4}-\d{3,5}호)(?![0-9])(?!선)")
+_TOKEN_RE = re.compile(r"[^\s,]+")
+_ADMIN_TOKEN = re.compile(rf"(?:{_SIDO_ALT}|{_SGG_ANY}|{_EMD}|{_RI})")
+_AUX_TOKEN = re.compile(r"\d{1,2}(?:차|단지)|[A-Z]?\d{1,3}블록|\d{1,5}(?:-\d{1,5})?(?:번지)?")
+_COMPLEX_TOKEN = re.compile(rf"[가-힣A-Za-z0-9{re.escape(_MASK)}]{{2,15}}")
+_NOT_COMPLEX = frozenset("""
+주소 주소는 주소지 현주소 자택 거주지 집 저희 저희집 우리 우리집 본가 친정 시댁 택배 배송지 방문 현재 지금
+이사 새 새집 옛 예전 전 원래 거기 여기 그 이 저 같은 동 호 단지 아파트
+""".split())
+_PARTICLE_FINALS = frozenset("은는을를에의와과랑께서도")
+# A unit inside an office / hospital building is a room, not a home: "OO타워 3동 201호".
+_NON_HOME_BEFORE = re.compile(
+    r"(?:타워|빌딩|센터|프라자|플라자|상가|병원|의원|본관|별관|신관|회관|학교|청사|공장|사옥|오피스)[ ]?\Z")
+
+# Romanized Korean addresses in English letters ("302-1104, 15 Banpo-daero, Seocho-gu, Seoul").
+_RO_PROVINCE = (r"(?:Seoul|Busan|Daegu|Incheon|Gwangju|Daejeon|Ulsan|Sejong|Jeju(?:-do)?|"
+                r"[A-Z][a-z]+-do|Gyeonggi|Gangwon|Chungbuk|Chungnam|Jeonbuk|Jeonnam|Gyeongbuk|Gyeongnam)"
+                r"(?:[ ]?(?:-si|City))?")
+_RO_ROAD = r"[A-Z][a-z]+(?:-[a-z]+)*-(?:daero|ro|gil)(?:[ ]?\d{1,3}(?:beon)?-?gil)?"
+_RO_ADMIN = r"[A-Z][a-z]+(?:-[a-z]+)*-(?:gu|si|gun|dong|eup|myeon|ri)"
+_ROMAN_RE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:(?:\d{1,4}-\d{1,5}|(?:Apt|Unit|Rm|Room|#)\.?[ ]?[0-9A-Za-z-]{1,10}),?[ ]+)?"
+    rf"(?:\d{{1,5}}(?:-\d{{1,5}})?,?[ ]+{_RO_ROAD}|{_RO_ROAD}[ ]+\d{{1,5}}(?:-\d{{1,5}})?)"
+    rf"(?:,?[ ]+{_RO_ADMIN})*(?:,?[ ]+{_RO_PROVINCE})?(?:,?[ ]+\d{{5}})?(?![A-Za-z0-9])"
+)
+# English street addresses: "455 Harrow Lane, Suite 300, Portland, OR 97205".
+_EN_STREET = (r"(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Boulevard|Blvd|Court|Ct|Way|Place|Pl|"
+              r"Terrace|Parkway|Pkwy|Highway|Hwy|Circle|Square|Sq)")
+_HAS_UPPER = re.compile(r"[A-Z]")
+_HAS_DIGIT = re.compile(r"[0-9]")
+_EN_ADDR_RE = re.compile(
+    rf"(?<![A-Za-z0-9])\d{{1,5}}[ ]+(?:[A-Z][a-z]+[ ]+){{1,3}}{_EN_STREET}\b\.?"
+    r"(?:,?[ ]+(?:Suite|Ste\.?|Apt\.?|Apartment|Unit|Floor|Fl\.?|#)[ ]?[0-9A-Za-z-]{1,8})?"
+    r"(?:,[ ]+[A-Z][a-z]+(?:[ ][A-Z][a-z]+)?(?:,?[ ]+[A-Z]{2})?(?:[ ]+\d{5}(?:-\d{4})?)?)?(?![A-Za-z0-9])"
+)
 
 # What may directly follow a building/lot number without breaking the address.
 _NUM_FOLLOWERS = frozenset({
@@ -132,8 +174,45 @@ class AddressRecognizer:
             if any(sp.start <= m.start() < sp.end or m.start() <= sp.start < m.end() for sp in out):
                 continue
             out.append(make_span(text, m.start(), m.end(), ADDRESS, 0.85, self.name))
+        ranges = [(sp.start, sp.end, sp.score) for sp in out]
+        if "호" in text:
+            for m in _UNIT_RE.finditer(text):
+                if _NON_HOME_BEFORE.search(text, max(0, m.start() - 12), m.start()):
+                    continue
+                ranges.append((self._extend_left(text, m.start()), m.end(), 0.85))
+        if _HAS_UPPER.search(text) and _HAS_DIGIT.search(text):
+            for rx in (_ROMAN_RE, _EN_ADDR_RE):
+                for m in rx.finditer(text):
+                    ranges.append((m.start(), m.end(), 0.85))
         allow = set(cfg.allowlist)
-        return sorted((sp for sp in out if sp.text not in allow), key=lambda sp: sp.start)
+        spans = [make_span(text, s, e, ADDRESS, sc, self.name) for s, e, sc in _union(ranges)]
+        return [sp for sp in spans if sp.text not in allow]
+
+    @staticmethod
+    def _extend_left(text: str, start: int) -> int:
+        """Grow an apartment unit leftwards over its complex name and admin-area words."""
+        line_start = text.rfind("\n", 0, start) + 1
+        seg = text[max(line_start, start - 80):start]
+        base = start - len(seg)
+        toks = list(_TOKEN_RE.finditer(seg))
+        complexes = 0
+        new_start = start
+        for i, t in enumerate(reversed(toks)):
+            word = t.group()
+            glued = i == 0 and t.end() == len(seg)          # "센텀파크102동"
+            if word in _NOT_COMPLEX:
+                break
+            if _ADMIN_TOKEN.fullmatch(word) and not glued and not (word[-1] == "리" and len(word) < 3):
+                new_start = base + t.start()
+                continue
+            if complexes >= 3 or not _COMPLEX_TOKEN.fullmatch(word):
+                break
+            if word[-1] in _PARTICLE_FINALS and not glued:
+                break
+            if not _AUX_TOKEN.fullmatch(word):
+                complexes += 1
+            new_start = base + t.start()
+        return new_start
 
     @staticmethod
     def _extend(text: str, end: int) -> int:
@@ -147,6 +226,18 @@ class AddressRecognizer:
             else:
                 break
         return end
+
+
+def _union(ranges: list[tuple[int, int, float]]) -> list[tuple[int, int, float]]:
+    """Merge overlapping ranges (keeping the highest score), sorted by start."""
+    out: list[list] = []
+    for s, e, sc in sorted(ranges):
+        if out and s < out[-1][1]:
+            out[-1][1] = max(out[-1][1], e)
+            out[-1][2] = max(out[-1][2], sc)
+        else:
+            out.append([s, e, sc])
+    return [tuple(r) for r in out]
 
 
 _TOKEN_SPLIT = re.compile(r"[\s,]+")

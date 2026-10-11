@@ -19,9 +19,11 @@ last modified by, title, subject, keywords, description, custom properties) are 
 names containing PII are renamed to "Sheet{n}" and table (ListObject) names to "Table{k}"
 (references in formulas are updated); quoted text in custom number formats is processed;
 mailto:/tel: hyperlinks are removed; data-validation lists, conditional-format text, header and
-footer text, autofilter values and chart titles are processed; chart caches, pivot tables (they
-store a copy of the source data) and embedded images are removed with a warning; VBA in .xlsm
-is kept but cannot be scanned (warning).
+footer text, autofilter values (of the sheet and of every table), sort lists and chart titles
+are processed; chart caches, pivot tables (they store a copy of the source data) and embedded
+images are removed with a warning; VBA in .xlsm is kept but cannot be scanned (warning, which
+lists every part kept unscanned). openpyxl copies the original EMF pictures of an .xlsm
+verbatim: their text is checked and a picture showing personal data is blanked.
 """
 from __future__ import annotations
 
@@ -41,14 +43,20 @@ from typing import TYPE_CHECKING, Any, Callable
 from .. import entities as E
 from ..types import AnonResult, Report
 from .text import (
+    _PERSON_EVIDENCE_KEYS,
+    GENERIC_PERSON_KEYS,
+    RELATION_WORDS,
     Batch,
     _name_like,
     check_paths,
     detect_encoding,
     encode_text,
     is_null_value,
+    looks_like_address,
+    name_shaped,
     numeric_text,
     write_atomic,
+    zip_size_problem,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -153,6 +161,7 @@ _PAREN = re.compile(r"\([^)]*\)|\[[^\]]*\]|（[^）]*）|<[^>]*>|\{[^}]*\}")
 _HEADER_JUNK = re.compile(r"[\s_\-.:·・*#/\\'\"`~!?,;|()\[\]{}<>（）※★☆•]+")
 _DIGITS = re.compile(r"[0-9]")
 _DIGIT_RUN = re.compile(r"[0-9]{3}")
+_TRAILING_NUMBER = re.compile(r"[0-9]+$")
 LOOSE_HEADER_CHARS = 14
 
 
@@ -163,7 +172,10 @@ def normalize_header(text: Any) -> str:
     if _HEADER_JUNK.sub("", stripped):
         t = stripped
     t = _HEADER_JUNK.sub("", t)
-    core = t.rstrip("0123456789")
+    # A numbered header ("연락처1", "보호자 2") keeps its word; a cell that carries a value
+    # ("주민번호 900101-2345678", "연락처 010-2345-6789" in a sentence) is not a header.
+    m = _TRAILING_NUMBER.search(t)
+    core = t[:m.start()] if m and len(m.group()) <= 2 else t
     return core or t
 
 
@@ -236,6 +248,9 @@ class ColumnPolicy:
             if n:
                 self.overrides[n] = parse_column_kind(v)
 
+    def is_override(self, header: Any) -> bool:
+        return isinstance(header, str) and normalize_header(header) in self.overrides
+
     def classify(self, header: Any) -> str | None:
         if not isinstance(header, str) or not header.strip() or len(header) > 80:
             return None
@@ -254,8 +269,18 @@ _NUMERIC_ENTITIES = frozenset({
 })
 
 
-_ADDRESS_ENDINGS = ("시", "도", "구", "군", "동", "읍", "면", "리", "로", "길", "호", "층", "아파트",
-                    "빌라", "타운")
+PHONE_MIN_DIGITS = 7          # "123-4567"; fewer digits are no phone number ("HP: 양성")
+PHONE_MIN_NUMBER_DIGITS = 8   # a phone stored as a number lost its 0 (1012345678); a cell
+                              # count (12500 under "Cell") is not a phone number
+
+
+def phone_number_shaped(value: Any) -> bool:
+    """A number cell that can be a phone number (8+ digits)."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return isinstance(value, int) and not isinstance(value, bool) and \
+        len(str(abs(value))) >= PHONE_MIN_NUMBER_DIGITS
+
 
 def plausible(entity: str, value: Any) -> bool:
     """Does `value` look like a value of a column of this entity (used to confirm headers)?"""
@@ -264,6 +289,8 @@ def plausible(entity: str, value: Any) -> bool:
     if isinstance(value, (_dt.date, _dt.datetime)):
         return entity in (E.BIRTHDATE, E.DATE)
     if isinstance(value, (int, float)):
+        if entity == E.PHONE:
+            return phone_number_shaped(value)
         return entity in _NUMERIC_ENTITIES
     s = str(value).strip()
     if is_null_value(s) or s.startswith("="):
@@ -272,10 +299,12 @@ def plausible(entity: str, value: Any) -> bool:
         return _name_like(s) and len(s.split()) <= 4 and len(s) <= 40
     if entity == E.EMAIL:
         return "@" in s
-    if entity == E.ADDRESS:
-        return bool(_DIGITS.search(s)) or len(s.split()) >= 2 or s.endswith(_ADDRESS_ENDINGS)
+    if entity == E.ADDRESS:   # '주소' is also the chief complaint (主訴): '두통' is no address
+        return looks_like_address(s)
     if entity in (E.BIRTHDATE, E.DATE):
         return len(_DIGITS.findall(s)) >= 2
+    if entity == E.PHONE:
+        return len(_DIGITS.findall(s)) >= PHONE_MIN_DIGITS
     if entity in _NUMERIC_ENTITIES:
         return len(_DIGITS.findall(s)) >= 4
     return True
@@ -288,37 +317,121 @@ def _is_text(v: Any) -> bool:
     return isinstance(v, str) and bool(v.strip()) and not v.startswith("=")
 
 
+def _neutral(entity: str, value: Any, policy: ColumnPolicy) -> bool:
+    """A cell that says nothing about its column's type: empty, '-', '없음', another label,
+    or (name columns) a relation word ('본인')."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    t = value.strip()
+    return (not t or is_null_value(t) or bool(policy.classify(t))
+            or (entity == E.PERSON and t.casefold() in RELATION_WORDS))
+
+
+def _generic_person(header: Any, policy: ColumnPolicy) -> bool:
+    """'이름' / 'Name' alone: a lab or drug sheet uses it for test and drug names."""
+    return (isinstance(header, str) and normalize_header(header) in GENERIC_PERSON_KEYS
+            and not policy.is_override(header))
+
+
+def _names_below(values: list[Any], policy: ColumnPolicy) -> bool:
+    """All informative values look like personal names ('최유나', 'John Smith')."""
+    vals = [v for v in values if not _neutral(E.PERSON, v, policy)]
+    return bool(vals) and all(name_shaped(v) for v in vals)
+
+
 def analyze_header(rows: list[Row], policy: ColumnPolicy) -> tuple[int | None, dict[int, str]]:
     """(index into rows of the header row, {column: kind}) or (None, {}).
 
     A recognised header only counts when the cells below it look like its values more often
     than they look like other labels: in a form-style sheet ("성명 | 홍길동" / "주소 | ..."), the
     cells under "성명" are labels (연락처, 주소), so that row is not a header.
+
+    Each column needs its own evidence: a column whose values are all unlike its header's
+    entity is not typed (an "HP" (H. pylori) column of 양성/음성, a "Cell" count column, a
+    "주소" (chief complaint) column of symptoms). A generic "이름"/"Name" header is a name
+    column only next to other personal columns (성별, 나이, 연락처 ...) or over values that look
+    like names; otherwise it is the test or drug name of a lab/medication sheet.
     """
     best: tuple[tuple[int, int], int, dict[int, str]] | None = None
     for r in range(min(HEADER_SCAN_ROWS, len(rows))):
         kinds = {c: k for c, v in rows[r].items() if _is_text(v) and (k := policy.classify(v))}
         if not kinds:
             continue
-        support = 0
+        status: dict[int, bool] = {}     # column -> supported by its own values
+        below_of: dict[int, list[Any]] = {}
         for c, k in kinds.items():
             if k in (SKIP, TEXT):
-                support += 1
+                status[c] = True
                 continue
             below = [rows[b][c] for b in range(r + 1, len(rows))
                      if c in rows[b] and not (isinstance(rows[b][c], str) and not rows[b][c].strip())]
             below = below[:HEADER_LOOKAHEAD]
+            below_of[c] = below
             labels = sum(1 for v in below if isinstance(v, str) and policy.classify(v))
             values = sum(1 for v in below if not (isinstance(v, str) and policy.classify(v))
                          and plausible(k, v))
             if values and values > labels:
-                support += 1
+                status[c] = True
+            elif (values or k == E.PERSON or policy.is_override(rows[r][c])
+                  or all(_neutral(k, v, policy) for v in below)):
+                status[c] = False        # typed if this row is the header, but no support
+            # else: values present and none fits this entity: not that kind of column
+        kept = {c: kinds[c] for c in status}
+        generic = [c for c, k in kept.items() if k == E.PERSON and _generic_person(rows[r][c], policy)]
+        if generic:
+            norm = {normalize_header(v) for v in rows[r].values() if isinstance(v, str)}
+            evidence = bool(norm & _PERSON_EVIDENCE_KEYS) or any(
+                k not in (SKIP, TEXT) and c not in generic for c, k in kept.items())
+            for c in generic:
+                if not (evidence or _names_below(below_of.get(c, []), policy)):
+                    del kept[c]
+                    del status[c]
+        support = sum(1 for c in kept if status[c])
         if not support:
             continue
-        score = (support, len(kinds))
+        score = (support, len(kept))
         if best is None or score > best[0]:
-            best = (score, r, kinds)
+            best = (score, r, kept)
     return (best[1], best[2]) if best else (None, {})
+
+
+_SEX_CELL = re.compile(r"(?i:남자|여자|남성|여성|male|female|남|여|m|f)")
+_AGE_CELL = re.compile(r"(?:만[ ]?)?(\d{1,3})[ ]?(?i:세|살|y/o|yo|yrs?|y)?")
+_SEX_AGE_CELL = re.compile(
+    rf"(?:{_SEX_CELL.pattern}[ ]?[/,·][ ]?{_AGE_CELL.pattern}"
+    rf"|{_AGE_CELL.pattern}[ ]?[/,·]?[ ]?{_SEX_CELL.pattern})")
+
+
+def _age_cell(v: Any) -> bool:
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    if isinstance(v, int) and not isinstance(v, bool):
+        return 0 <= v <= 120
+    if isinstance(v, str):
+        m = _AGE_CELL.fullmatch(v.strip())
+        return bool(m) and int(m.group(1)) <= 120
+    return False
+
+
+def headerless_people(row: Row) -> dict[int, str]:
+    """A row with no header: '여민하 | F | 29 | 고혈압' -> {0: PERSON}.
+
+    A cell that looks like a name on its own (Hangul surname + 1-2 syllables, not a common
+    word) is a name when the same row also holds a sex cell (M/F/남/여) and an age cell, and
+    the name comes before them."""
+    sex = [c for c, v in row.items() if isinstance(v, str) and _SEX_CELL.fullmatch(v.strip())]
+    age = [c for c, v in row.items() if _age_cell(v)]
+    both = [c for c, v in row.items() if isinstance(v, str) and _SEX_AGE_CELL.fullmatch(v.strip())]
+    bound = -1           # a name must come before a sex cell and an age cell
+    if sex and age:
+        bound = min(max(sex), max(age))
+    if both:
+        bound = max(bound, max(both))
+    return {c: E.PERSON for c, v in row.items()
+            if c < bound and isinstance(v, str) and re.fullmatch(r"[가-힣]{2,4}", v.strip())
+            and name_shaped(v)}
 
 
 def label_value_kinds(row: Row, policy: ColumnPolicy) -> dict[int, str]:
@@ -338,7 +451,8 @@ def label_value_kinds(row: Row, policy: ColumnPolicy) -> dict[int, str]:
             v2 = row[c2]
             if v2 is None or (isinstance(v2, str) and not v2.strip()):
                 continue
-            if not (isinstance(v2, str) and policy.classify(v2)) and plausible(k, v2):
+            if (not (isinstance(v2, str) and policy.classify(v2)) and plausible(k, v2)
+                    and not (k == E.PERSON and _generic_person(v, policy) and not name_shaped(v2))):
                 out[c2] = k
             break
     return out
@@ -370,6 +484,9 @@ def build_layout(grid: dict[int, Row], policy: ColumnPolicy) -> Layout:
         if header_row is not None and r >= header_row:
             break
         lab = label_value_kinds(grid[r], policy)
+        if header_row is None:
+            for c, k in headerless_people(grid[r]).items():
+                lab.setdefault(c, k)
         if lab:
             layout.labels[r] = lab
     return layout
@@ -763,6 +880,8 @@ class _Workbook:
                     self.batch.add(text, self._cell_setter(cell), entity)
             return
         if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if entity == E.PHONE and not phone_number_shaped(v):
+                entity = None     # 12500 under "Cell" (cell count) / "HP" is no phone number
             text = _birthdate_number(v) if entity == E.BIRTHDATE else numeric_text(v, entity)
             if text is not None:
                 self.batch.add(text, self._cell_setter(cell), entity)
@@ -825,7 +944,21 @@ class _Workbook:
                 self._attr_slot(rule, "text")
 
     def _auto_filter(self, ws: Any) -> None:
-        af = getattr(ws, "auto_filter", None)
+        """Filter state stores cell values: the values ticked in a filter drop-down, custom
+        filter criteria and custom sort lists - of the sheet and of every table (Ctrl+T),
+        whose own filter lives in xl/tables/tableN.xml."""
+        self._filter(getattr(ws, "auto_filter", None))
+        self._sort_state(getattr(ws, "sort_state", None))
+        for table in list(getattr(ws, "tables", {}).values()):
+            self._filter(getattr(table, "autoFilter", None))
+            self._sort_state(getattr(table, "sortState", None))
+            self._attr_slot(table, "comment")
+            for col in list(getattr(table, "tableColumns", None) or []):
+                self._attr_slot(col, "totalsRowLabel")
+
+    def _filter(self, af: Any) -> None:
+        if af is None:
+            return
         for fc in list(getattr(af, "filterColumn", None) or []):
             filters = getattr(fc, "filters", None)
             values = getattr(filters, "filter", None) if filters is not None else None
@@ -836,6 +969,11 @@ class _Workbook:
             custom = getattr(fc, "customFilters", None)
             for cfl in list(getattr(custom, "customFilter", None) or []):
                 self._attr_slot(cfl, "val")
+        self._sort_state(getattr(af, "sortState", None))
+
+    def _sort_state(self, state: Any) -> None:
+        for cond in list(getattr(state, "sortCondition", None) or []):
+            self._attr_slot(cond, "customList")
 
     def _defined_name(self, dn: Any, where: str) -> None:
         text = getattr(dn, "attr_text", None)
@@ -985,7 +1123,19 @@ class _Workbook:
             wb.custom_doc_props = CustomPropertyList()
         except ImportError:  # pragma: no cover - openpyxl < 3.1
             pass
+        # Free-text notes that Excel keeps but rarely shows: defined-name comments / help
+        # texts and what-if scenarios (name, author, comment and the input values).
+        for dn in _defined_names(wb) + [d for ws in wb._sheets
+                                        for d in getattr(ws, "defined_names", {}).values()]:
+            for attr in ("comment", "description", "help", "statusBar", "customMenu"):
+                if getattr(dn, attr, None):
+                    setattr(dn, attr, None)
         for n, sheet in enumerate(wb._sheets, start=1):
+            scenarios = getattr(sheet, "scenarios", None)
+            if scenarios is not None and getattr(scenarios, "scenario", None):
+                from openpyxl.worksheet.scenario import ScenarioList
+                self.notes.count["scenarios"] += len(scenarios.scenario)
+                sheet.scenarios = ScenarioList()
             images = getattr(sheet, "_images", None)
             if images:
                 self.notes.count["images"] += len(images)
@@ -1022,6 +1172,9 @@ class _Workbook:
         if c["pivots"]:
             w.append(f"피벗 테이블 {c['pivots']}개를 제거했습니다 (원본 데이터 사본이 들어 있음) "
                      f"({c['pivots']} pivot table(s) removed: they store a copy of the source data)")
+        if c["scenarios"]:
+            w.append(f"가상 분석 시나리오 {c['scenarios']}개를 제거했습니다 (이름·만든 사람·메모·입력값에 "
+                     f"개인정보가 있을 수 있음) ({c['scenarios']} what-if scenario(s) removed)")
         if c["chart_removed"]:
             w.append(f"처리할 수 없는 차트 {c['chart_removed']}개를 제거했습니다 "
                      f"({c['chart_removed']} chart(s) could not be checked and were removed)")
@@ -1041,14 +1194,6 @@ _OPEN_ERROR = ("엑셀 파일을 열 수 없습니다. 암호가 걸려 있거�
                "password-protected or damaged)")
 
 
-def _zip_names(src: Path) -> list[str]:
-    try:
-        with zipfile.ZipFile(src) as z:
-            return z.namelist()
-    except (zipfile.BadZipFile, OSError) as e:
-        raise ValueError(_OPEN_ERROR) from e
-
-
 def _drawing_has_shapes(src: Path, names: list[str]) -> bool:
     try:
         with zipfile.ZipFile(src) as z:
@@ -1060,6 +1205,89 @@ def _drawing_has_shapes(src: Path, names: list[str]) -> bool:
     except (zipfile.BadZipFile, OSError, KeyError):
         return True
     return False
+
+
+def _zip_names(src: Path) -> list[str]:
+    try:
+        with zipfile.ZipFile(src) as z:
+            infos = z.infolist()
+    except (zipfile.BadZipFile, OSError) as e:
+        raise ValueError(_OPEN_ERROR) from e
+    problem = zip_size_problem(infos)
+    if problem:
+        raise ValueError(problem)
+    return [i.filename for i in infos]
+
+
+_KEPT_VBA_PARTS = re.compile(
+    r"xl/vba|xl/drawings/.*vmlDrawing\d\.vml|xl/ctrlProps|customUI|xl/activeX|xl/media/.*\.emf")
+
+
+class _VbaParts:
+    """Parts openpyxl copies verbatim from the original .xlsm (keep_vba): VBA, form controls
+    (VML, ctrlProps), ActiveX, ribbon (customUI) and EMF pictures. EMF text is checked with
+    the workbook; a picture showing personal data is replaced by an empty one."""
+
+    def __init__(self, wb: Any, batch: Batch) -> None:
+        self.wb = wb
+        self.blank: set[str] = set()
+        self.unchecked_emf = 0
+        archive = getattr(wb, "vba_archive", None)
+        self.names = list(archive.namelist()) if archive is not None else []
+        if archive is None:
+            return
+        from .docx import vector_texts
+        for name in self.names:
+            if not re.fullmatch(r"xl/media/.*\.emf", name, re.I):
+                continue
+            found = vector_texts(archive.read(name), ".emf")
+            if found is None or found[1]:
+                self.unchecked_emf += 1
+            if found and any(t.strip() for t in found[0]):
+                batch.add("\n".join(t.strip() for t in found[0] if t.strip()),
+                          lambda res, n=name: self.blank.add(n))
+
+    def finish(self) -> None:
+        if not self.blank:
+            return
+        from .docx import blank_vector
+        old = self.wb.vba_archive
+        new = zipfile.ZipFile(io.BytesIO(), "a", zipfile.ZIP_DEFLATED)
+        for info in old.infolist():
+            data = old.read(info.filename)
+            if info.filename in self.blank:
+                data = blank_vector(data, ".emf")
+            new.writestr(info.filename, data)
+        old.close()
+        self.wb.vba_archive = new
+
+    def warnings(self) -> list[str]:
+        groups: Counter[str] = Counter()
+        for n in self.names:
+            if not _KEPT_VBA_PARTS.match(n):
+                continue
+            if n.startswith("xl/vba") or n.endswith("vbaProject.bin"):
+                groups["매크로(VBA) / VBA"] += 1
+            elif "vmlDrawing" in n or n.startswith("xl/ctrlProps"):
+                groups["양식 컨트롤 / form controls"] += 1
+            elif n.startswith("xl/activeX"):
+                groups["ActiveX 컨트롤 / ActiveX controls"] += 1
+            elif n.startswith("customUI"):
+                groups["리본 메뉴 / ribbon (customUI)"] += 1
+        if self.unchecked_emf:
+            groups["검사하지 못한 EMF 그림(손상/그림 속 이미지) / EMF pictures not checked "
+                   "(unreadable or holding bitmaps)"] = self.unchecked_emf
+        msgs = []
+        if groups:
+            listed = ", ".join(f"{k} {v}" for k, v in groups.items())
+            msgs.append("매크로 통합문서(.xlsm)의 다음 부분은 원본 그대로 두었고 검사하지 않았습니다. 그 안에 "
+                        "개인정보가 없는지 직접 확인하세요 (parts of the .xlsm kept as-is and NOT "
+                        f"scanned): {listed}")
+        if self.blank:
+            k = len(self.blank)
+            msgs.append(f"개인정보가 보이는 EMF 그림 {k}개를 빈 그림으로 바꿨습니다 ({k} EMF picture(s) "
+                        f"showing personal data were replaced by an empty picture)")
+        return msgs
 
 
 def _process_xlsx(src: Path, dst: Path, detector: "Detector", anonymizer: "Anonymizer",
@@ -1081,9 +1309,12 @@ def _process_xlsx(src: Path, dst: Path, detector: "Detector", anonymizer: "Anony
     try:
         work = _Workbook(wb, detector, anonymizer, policy, report)
         work.collect()
+        vba = _VbaParts(wb, work.batch) if xlsm else None
         work.batch.run()
         work.finish()
-        _xlsx_warnings(src, names, xlsm, report)
+        if vba is not None:
+            vba.finish()
+        _xlsx_warnings(src, names, xlsm, report, vba)
         write_atomic(dst, wb.save)
     finally:
         _close_vba_archive(wb)
@@ -1100,7 +1331,8 @@ def _close_vba_archive(wb: Any) -> None:
             pass
 
 
-def _xlsx_warnings(src: Path, names: list[str], xlsm: bool, report: Report) -> None:
+def _xlsx_warnings(src: Path, names: list[str], xlsm: bool, report: Report,
+                   vba: "_VbaParts | None" = None) -> None:
     if any(n.startswith("xl/externalLinks/") for n in names):
         report.warnings.append("다른 통합문서 연결(캐시된 값 포함)을 제거했습니다 — 해당 수식은 다시 연결해야 "
                                "합니다 (links to external workbooks and their cached values were "
@@ -1108,10 +1340,8 @@ def _xlsx_warnings(src: Path, names: list[str], xlsm: bool, report: Report) -> N
     if _drawing_has_shapes(src, names):
         report.warnings.append("도형/텍스트 상자는 보존되지 않아 제거되었습니다 "
                                "(shapes and text boxes are not preserved and were removed)")
-    if xlsm and any(n.startswith("xl/vba") or n.endswith("vbaProject.bin") for n in names):
-        report.warnings.append("매크로(VBA)와 양식 컨트롤은 검사하지 않고 그대로 두었습니다. 코드 안에 개인정보가 "
-                               "없는지 직접 확인하세요 (VBA macros and form controls were kept "
-                               "as-is and NOT scanned)")
+    if xlsm and vba is not None:
+        report.warnings.extend(vba.warnings())
 
 
 # ---------------------------------------------------------------------------------------------

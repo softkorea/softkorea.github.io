@@ -24,20 +24,29 @@ Pipeline for one file (:func:`process`):
    character boxes; ``apply_redactions`` REMOVES the characters from the content stream
    (image pixels underneath are blanked) and draws a black box with the replacement text
    ([이름1], 010-****-5678 ...) in white, using the viewer's Korean font (not embedded).
-5. Metadata scrubbing: document info and XMP metadata, page thumbnails, embedded files,
-   file-attachment / media annotations, annotation authors and rich text, XFA form data,
-   structure-tree alt texts, application private data, JavaScript and EXIF/GPS data inside
-   embedded JPEG photos are removed; form-field values, annotation texts and bookmark titles
-   are de-identified; mailto:/tel:/launch links and links whose target contains PII are
-   removed.
+5. Metadata scrubbing: document info and XMP metadata, page thumbnails, embedded files (also
+   PDF/A-3 associated files, /AF), file-attachment / media annotations, hidden and print-only
+   annotations (their text is never shown, so it cannot be checked), annotation authors and
+   rich text, XFA form data, digital signatures (signer name and certificate), structure-tree
+   alt texts, application private data, JavaScript and EXIF/GPS data inside embedded JPEG
+   photos are removed; form-field values, annotation texts and bookmark titles are
+   de-identified; mailto:/tel:/launch links and links whose target contains PII are removed.
+   A page that is rebuilt from an image leaves nothing behind: references to the old page
+   object (open action, named destinations, form fields) are moved to the new page and the old
+   object is emptied.
 6. The file is saved without history (``garbage=4, clean=True``), then VERIFIED: the output is
    re-opened and its text extracted; a page on which a removed value can still be extracted is
    rebuilt as an image (fallback), and if a value still remains the run fails and nothing is
-   written.
+   written. Streams that no page shows (attachments, orphaned objects ...) are searched for
+   removed values too.
 
 Images inside text pages: ``[ocr] pdf_images = "auto"`` (default) OCRs images covering at least
 20% of a page, ``true`` OCRs every image, ``false`` none; unchecked images are reported in a
-warning. ``[ocr] pdf_dpi`` (default 300) sets the render resolution of scanned pages.
+warning. Images with transparency are OCR'd as displayed (composited onto white). Stencil masks
+(1-bit "text layers" of compact scans, fax images), masked images, oversized images and text
+converted to vector outlines are OCR'd from a rendering of the page; when they show personal
+data, the page is rebuilt from a redacted image. ``[ocr] pdf_dpi`` (default 300) sets the
+render resolution of scanned pages.
 """
 from __future__ import annotations
 
@@ -68,6 +77,10 @@ MAX_RENDER_PIXELS = 36_000_000   # cap for huge pages (A3 at 300 dpi is ~17 M pi
 JPEG_QUALITY = 90
 SCAN_COVERAGE = 0.5         # images covering this share of a page without visible text = scan
 AUTO_IMAGE_COVERAGE = 0.2   # pdf_images="auto": OCR images covering this share of a page
+OUTLINE_MIN_ITEMS = 40      # path segments in filled shapes that may be text drawn as outlines
+OUTLINE_MIN_PATH_ITEMS = 3  # (plain filled rectangles - cell shading - are not glyphs)
+OUTLINE_CELL = 12.0         # pt: shapes this close are one group (a word, a logo, a stamp)
+HIDDEN_ANNOT_FLAGS = 2 | 32  # Hidden, NoView (print-only): never displayed, never extracted
 MIN_IMAGE_W, MIN_IMAGE_H = 24, 12   # smaller images cannot hold readable text
 GARBLED_RATIO = 0.3         # share of undecodable characters that makes a text layer unusable
 GARBLED_MIN = 5
@@ -282,6 +295,97 @@ def _seams(lines: _Lines, page_no: int) -> list[_Row]:
     return out
 
 
+_SPACED_NUM = "-./()"
+_FALLBACK_LABELS = frozenset("성명 이름 성함 환자 환자명 환자성명 수진자 보호자 보호자명 신청인 작성자 담당의 "
+                             "주치의 예금주".split())
+
+
+def _name_labels() -> frozenset:
+    try:
+        from ..recognizers import names
+        labels = getattr(names, "_LABEL_WORDS", None)
+        if labels:
+            return frozenset(labels) | _FALLBACK_LABELS
+    except Exception:  # noqa: BLE001 - the built-in list is enough
+        pass
+    return _FALLBACK_LABELS
+
+
+def _char_kind(c: str) -> str | None:
+    if "가" <= c <= "힣":
+        return "h"
+    if c.isdigit() or c in _SPACED_NUM:
+        return "n"
+    if c.isascii() and c.isalpha():
+        return "a"
+    return None
+
+
+def _spaced_variants(rows: list[_Row]) -> list[_Row]:
+    """Detection rows for letter-spaced text: Korean forms align name cells by distributing
+    the syllables ("하  은  별") and print numbers one digit per box ("8 5 0 3 1 5 - 1 ..."),
+    which MuPDF extracts as single-character words. Variants drop the spaces between
+    single-character words of the same kind (digits, then also syllables / letters) and split
+    a joined label from the value after it ("성명하은별" -> "성명 하은별"). They reuse the row's
+    characters (exact boxes) and are treated like seam rows (no double counting)."""
+    labels = sorted(_name_labels(), key=len, reverse=True)
+    out: list[_Row] = []
+    for row in rows:
+        if row.seam:
+            continue
+        toks: list[tuple[int, int]] = []
+        start = None
+        for i, ch in enumerate(row.chars + [_Char(" ", None, -1)]):
+            if ch.c.isspace():
+                if start is not None:
+                    toks.append((start, i))
+                    start = None
+            elif start is None:
+                start = i
+        single = [e - s == 1 for s, e in toks]
+        if not any(single[i] and single[i + 1] for i in range(len(toks) - 1)):
+            continue
+        kinds = [_char_kind(row.chars[s].c) for s, _ in toks]
+        seen = {row.text}
+        for allowed in ({"n"}, {"n", "h", "a"}):
+            chars: list[_Char] = []
+            splits: list[int] = []          # positions in `chars` where a label ends
+            run_start, run = 0, ""
+            for i, (s, e) in enumerate(toks):
+                join = (i > 0 and single[i - 1] and single[i] and kinds[i] is not None
+                        and kinds[i] == kinds[i - 1] and kinds[i] in allowed)
+                if i and not join:
+                    splits += _label_split(run, run_start, labels)
+                    chars.append(_Char(" ", None, -1))
+                if not join:
+                    run_start, run = len(chars), ""
+                chars.extend(row.chars[s:e])
+                run += "".join(c.c for c in row.chars[s:e])
+            splits += _label_split(run, run_start, labels)
+            versions = [chars]
+            if splits:
+                split = list(chars)
+                for pos in sorted(splits, reverse=True):
+                    split.insert(pos, _Char(" ", None, -1))
+                versions.append(split)
+            for v in versions:
+                text = "".join(c.c for c in v)
+                if text not in seen:
+                    seen.add(text)
+                    out.append(_Row(row.page, v, row.secondary, seam=True))
+    return out
+
+
+def _label_split(run: str, start: int, labels: list[str]) -> list[int]:
+    """[position after the label] when a joined syllable run is a name label + 2-4 syllables."""
+    if len(run) < 4 or not all("가" <= c <= "힣" for c in run):
+        return []
+    for lab in labels:
+        if run.startswith(lab) and 2 <= len(run) - len(lab) <= 4:
+            return [start + len(lab)]
+    return []
+
+
 def _span_rects(row: _Row, start: int, end: int, fitz: Any) -> list[Any]:
     """Union of the character boxes of row.text[start:end], one rect per source line."""
     groups: dict[int, list[Bbox]] = {}
@@ -331,7 +435,7 @@ def _pages_text(pages: list[int]) -> str:
 def _pil_from_pixmap(pix: Any) -> "Image.Image":
     from PIL import Image
 
-    mode = {1: "L", 3: "RGB"}.get(pix.n)
+    mode = ({2: "LA", 4: "RGBA"} if pix.alpha else {1: "L", 3: "RGB"}).get(pix.n)
     if mode is None:
         raise PdfError("지원하지 않는 이미지 색상 형식 (unsupported image colour format)")
     return Image.frombytes(mode, (pix.width, pix.height), pix.samples)
@@ -396,6 +500,8 @@ class _PdfJob:
         self.toc: list[list] = []
         self.toc_changed = False
         self.rasterized: list[int] = []
+        self.replaced: dict[int, int] = {}                # old page xref -> rebuilt page xref
+        self._probed: dict[str, bool] = {}                # rendering digest -> needs rebuild
         self._shared = False
         opts = dict(getattr(cfg, "ocr", None) or {})
         self.image_mode = opts.get("pdf_images", "auto")
@@ -443,10 +549,12 @@ class _PdfJob:
                 info.kind = "text"
                 info.rows = _rows(lines, pno) + _seams(lines, pno)
                 info.rows += self._actualtext_rows(page, pno, lines)
+                info.rows += _spaced_variants(info.rows)
             elif lines.lines or invisible:
                 # Text exists but none of it is visible: an OCR layer over a scan (or hidden text).
                 info.kind, info.reason = "scan", "ocr_layer"
                 info.rows = _rows(lines, pno) + _seams(lines, pno)
+                info.rows += _spaced_variants(info.rows)
             elif n_images or self._has_drawings(page):
                 info.kind, info.reason = "scan", "no_text"
             self.pages.append(info)
@@ -540,6 +648,16 @@ class _PdfJob:
             if atype in delete_types:
                 self.annot_jobs.append((pno, annot.xref, "delete", ""))
                 self.note("attachment")
+                continue
+            try:
+                flags = int(annot.flags or 0)
+            except Exception:  # noqa: BLE001
+                flags = 0
+            if flags & HIDDEN_ANNOT_FLAGS and atype != redact_type:
+                # Hidden or print-only (EMR print stamps): text extraction skips them, so their
+                # appearance text could never be checked - remove them.
+                self.annot_jobs.append((pno, annot.xref, "delete", ""))
+                self.note("hidden_annot")
                 continue
             if atype == redact_type:
                 continue
@@ -764,6 +882,7 @@ class _PdfJob:
         auto = mode in ("auto", None, "")
         done: set[int] = set()
         unchecked: set[Any] = set()
+        masked_pages: list[int] = []
         for info in self.pages:
             if info.kind != "text":
                 continue
@@ -773,6 +892,7 @@ class _PdfJob:
             except Exception:  # noqa: BLE001
                 infos = []
             area = abs(page.rect) or 1.0
+            probe: list[Any] = []       # page areas to OCR as displayed
             for im in infos:
                 xref = int(im.get("xref") or 0)
                 w, h = int(im.get("width") or 0), int(im.get("height") or 0)
@@ -786,13 +906,135 @@ class _PdfJob:
                     if key not in done:
                         unchecked.add(key)
                     continue
+                if self._needs_render(xref, w, h):
+                    # A stencil mask (the 1-bit text layer of compact scans, faxes), an image
+                    # with an explicit /Mask or one too large to decode: what the page shows
+                    # is OCR'd, per page.
+                    unchecked.discard(key)
+                    if not r.is_empty:
+                        probe.append(r)
+                    continue
                 if xref in done:
                     continue
                 done.add(xref)
                 unchecked.discard(xref)
                 self._ocr_image(page, info.index, xref)
+            if everything or auto:
+                probe += self._outline_regions(page)
+            if probe and self._probe(page, info.index, probe):
+                info.kind, info.reason = "scan", "masked"
+                masked_pages.append(info.index)
         if unchecked:
             self.note("image_unchecked", len(unchecked))
+        if masked_pages:
+            self.notes["masked_pages"] = masked_pages  # type: ignore[assignment]
+
+    def _needs_render(self, xref: int, w: int, h: int) -> bool:
+        doc = self.doc
+        try:
+            if doc.xref_get_key(xref, "ImageMask") == ("bool", "true"):
+                return True
+            if doc.xref_get_key(xref, "Mask")[0] != "null":
+                return True
+        except Exception:  # noqa: BLE001 - unknown: OCR what is shown
+            return True
+        from .image import MAX_IMAGE_PIXELS
+        limit = int((getattr(self.cfg, "ocr", None) or {}).get("max_image_pixels")
+                    or MAX_IMAGE_PIXELS)
+        return w * h > limit
+
+    def _outline_regions(self, page: Any) -> list[Any]:
+        """Areas of filled vector shapes that may be text converted to outlines ("print text
+        as graphics", stamps, logos): shapes close to each other are grouped (on a coarse grid)
+        and groups with enough path segments are returned; plain filled rectangles (cell
+        shading) are ignored."""
+        try:
+            get = getattr(page, "get_cdrawings", None) or page.get_drawings
+            paths = get()
+        except Exception:  # noqa: BLE001
+            return []
+        fitz = self.fitz
+        prect = page.rect
+        area = abs(prect) or 1.0
+        shapes: list[tuple[Any, int]] = []
+        for path in paths:
+            if path.get("fill") is None:
+                continue
+            n = len(path.get("items") or ())
+            rect = fitz.Rect(path.get("rect") or (0, 0, 0, 0)) & prect
+            if n < OUTLINE_MIN_PATH_ITEMS or rect.is_empty or abs(rect) > 0.9 * area:
+                continue
+            shapes.append((rect, n))
+        if sum(n for _, n in shapes) < OUTLINE_MIN_ITEMS:
+            return []
+        cell = OUTLINE_CELL
+        cols = max(1, math.ceil(prect.width / cell))
+        rows = max(1, math.ceil(prect.height / cell))
+        owner: dict[int, int] = {}            # grid cell -> shape index (union-find below)
+        parent = list(range(len(shapes)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        for i, (r, _) in enumerate(shapes):
+            x0 = max(0, int((r.x0 - prect.x0) // cell))
+            x1 = min(cols - 1, int((r.x1 - prect.x0) // cell))
+            y0 = max(0, int((r.y0 - prect.y0) // cell))
+            y1 = min(rows - 1, int((r.y1 - prect.y0) // cell))
+            for gy in range(y0, y1 + 1):
+                for gx in range(x0, x1 + 1):
+                    k = gy * cols + gx
+                    if k in owner:
+                        parent[find(i)] = find(owner[k])
+                    else:
+                        owner[k] = i
+        groups: dict[int, list[int]] = {}
+        for i in range(len(shapes)):
+            groups.setdefault(find(i), []).append(i)
+        out = []
+        for members in groups.values():
+            if sum(shapes[i][1] for i in members) < OUTLINE_MIN_ITEMS:
+                continue
+            u = fitz.Rect(shapes[members[0]][0])
+            for i in members[1:]:
+                u |= shapes[i][0]
+            out.append(u)
+        return out
+
+    def _probe(self, page: Any, pno: int, rects: list[Any]) -> bool:
+        """OCR the page as displayed inside `rects`; True when something that is not "keep"
+        shows there (the page is then rebuilt from a redacted rendering)."""
+        import hashlib
+
+        from .image import redact_image
+
+        fitz = self.fitz
+        self.share_values()
+        for rect in rects:
+            clip = fitz.Rect(rect) & page.rect
+            if clip.is_empty or clip.width < 2 or clip.height < 2:
+                continue
+            zoom = min(max(self.dpi, 72) / 72.0, math.sqrt(MAX_RENDER_PIXELS / max(abs(clip), 1.0)))
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
+                img = _pil_from_pixmap(pix)
+            except PdfError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                raise PdfError(f"{pno + 1}쪽을 그림으로 만들 수 없습니다 (cannot render page "
+                               f"{pno + 1}: {type(e).__name__})") from e
+            key = hashlib.sha256(img.tobytes()).hexdigest() + f"{img.size}"
+            hit = self._probed.get(key)          # the same logo / stamp on every page
+            if hit is None:
+                _, rep = redact_image(img, self.detector, self.cfg, self.anonymizer)
+                hit = any(self.cfg.action_for(ent) != "keep" for ent in rep.counts)
+                self._probed[key] = hit
+            if hit:
+                return True
+        return False
 
     def _ocr_image(self, page: Any, pno: int, xref: int) -> None:
         fitz = self.fitz
@@ -801,12 +1043,15 @@ class _PdfJob:
         self.share_values()
         try:
             pix = fitz.Pixmap(self.doc, xref)
-            if pix.colorspace is None:
-                return  # stencil mask: no picture content of its own
             if pix.n - pix.alpha not in (1, 3):
                 pix = fitz.Pixmap(fitz.csRGB, pix)
             if pix.alpha:
                 pix = fitz.Pixmap(pix, 0)
+            smask = self._smask(xref, pix)
+            if smask is not None:
+                # Transparency (a stamp / signature PNG): the colour channels alone are often
+                # all black; OCR what is displayed (composited onto white), keep the alpha.
+                pix = fitz.Pixmap(pix, smask)
             img = _pil_from_pixmap(pix)
         except PdfError:
             raise
@@ -821,6 +1066,27 @@ class _PdfJob:
             out.save(buf, format="PNG")
             page.replace_image(xref, stream=buf.getvalue())
             self.note("image_redacted")
+
+    def _smask(self, xref: int, pix: Any) -> Any:
+        """The image's soft mask as an alpha pixmap of the same size, or None."""
+        fitz, doc = self.fitz, self.doc
+        try:
+            kind, val = doc.xref_get_key(xref, "SMask")
+        except Exception:  # noqa: BLE001
+            return None
+        if kind != "xref":
+            return None
+        mask = fitz.Pixmap(doc, int(val.split()[0]))
+        if mask.n != 1 or mask.alpha:
+            mask = fitz.Pixmap(fitz.csGRAY, mask) if mask.colorspace else mask
+        if (mask.width, mask.height) != (pix.width, pix.height):
+            from PIL import Image
+
+            m = Image.frombytes("L", (mask.width, mask.height), mask.samples).resize(
+                (pix.width, pix.height), Image.BILINEAR)
+            mask = fitz.Pixmap(fitz.csGRAY, fitz.IRect(0, 0, pix.width, pix.height),
+                               m.tobytes(), False)
+        return mask
 
     # -- scanned pages -----------------------------------------------------------------------
 
@@ -870,9 +1136,12 @@ class _PdfJob:
                              Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+        old_xref = page.xref
+        _drop_annotations(page)     # rendered into the picture; their objects must go too
         new = doc.new_page(pno, width=width, height=height)
         new.insert_image(new.rect, stream=buf.getvalue())
         doc.delete_page(pno + 1)
+        self.replaced[old_xref] = doc[pno].xref
         self.rasterized.append(pno)
         info.kind = "image"
 
@@ -907,8 +1176,14 @@ class _PdfJob:
             names = []
         for name in names:
             doc.embfile_del(name)
-        if names:
-            self.note("embedded", len(names))
+        # PDF/A-3 / Factur-X: the same files are also listed as associated files (/AF) of the
+        # catalog, pages, annotations or XObjects; embfile_del only edits the name tree.
+        streams = self._drop_associated_files()
+        if names or streams:
+            self.note("embedded", max(len(names), streams))
+        sigs = self._drop_signatures()
+        if sigs:
+            self.note("signature", sigs)
         cat = doc.pdf_catalog()
         for key in ("AcroForm/XFA", "StructTreeRoot", "PieceInfo"):
             try:
@@ -951,6 +1226,122 @@ class _PdfJob:
                 elif doc.xref_get_key(xref, "Metadata")[0] != "null":
                     doc.xref_set_key(xref, "Metadata", "null")
             except Exception:  # noqa: BLE001 - broken objects are dropped by garbage collection
+                continue
+
+    def _drop_associated_files(self) -> int:
+        """Remove /AF and /EF references and empty every embedded-file stream; returns how
+        many embedded-file streams there were."""
+        doc, n = self.doc, 0
+        for xref in range(1, doc.xref_length()):
+            try:
+                if doc.xref_get_key(xref, "Type") == ("name", "/EmbeddedFile"):
+                    doc.update_stream(xref, b"")
+                    doc.update_object(xref, "<<>>")
+                    n += 1
+                    continue
+                for key in ("AF", "EF", "RF"):
+                    if doc.xref_get_key(xref, key)[0] != "null":
+                        doc.xref_set_key(xref, key, "null")
+            except Exception:  # noqa: BLE001 - verification counts what is left
+                continue
+        return n
+
+    def _drop_signatures(self) -> int:
+        """Digital signatures: the signature dictionary holds the signer's name, contact, place
+        and the PKCS#7 blob with the certificate (CN = name, e-mail). The signature no longer
+        verifies after editing anyway: the value and its appearance are removed, the empty
+        signature field stays."""
+        doc, n = self.doc, 0
+        sig_dicts: set[int] = set()
+        for xref in range(1, doc.xref_length()):
+            try:
+                if doc.xref_is_stream(xref):
+                    continue
+                typ = doc.xref_get_key(xref, "Type")
+                if typ in (("name", "/Sig"), ("name", "/DocTimeStamp")) or (
+                        doc.xref_get_key(xref, "ByteRange")[0] == "array"
+                        and doc.xref_get_key(xref, "Contents")[0] in ("string", "hexstring")):
+                    sig_dicts.add(xref)
+                    continue
+                if doc.xref_get_key(xref, "FT") == ("name", "/Sig"):
+                    v = doc.xref_get_key(xref, "V")
+                    if v[0] != "null":
+                        doc.xref_set_key(xref, "V", "null")
+                        if doc.xref_get_key(xref, "AP")[0] != "null":
+                            doc.xref_set_key(xref, "AP", "null")
+                        n += 1
+            except Exception:  # noqa: BLE001
+                continue
+        for xref in sig_dicts:
+            try:
+                doc.update_object(xref, "<<>>")
+            except Exception:  # noqa: BLE001
+                continue
+        cat = doc.pdf_catalog()
+        for key in ("Perms", "DSS"):
+            try:
+                if doc.xref_get_key(cat, key)[0] != "null":
+                    doc.xref_set_key(cat, key, "null")
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            if doc.xref_get_key(cat, "AcroForm/SigFlags")[0] != "null":
+                doc.xref_set_key(cat, "AcroForm/SigFlags", "null")
+        except Exception:  # noqa: BLE001
+            pass
+        return max(n, len(sig_dicts))
+
+    def neutralize_orphans(self) -> None:
+        """Page objects that left the page tree (pages rebuilt from an image, pages deleted in
+        an editor) stay in the file as long as anything refers to them - an open action, a
+        named destination, a form field - and with them the original scan / content stream.
+        References are moved to the page that replaced them (else the first page) and the old
+        objects are emptied."""
+        doc = self.doc
+        live = {doc[i].xref for i in range(doc.page_count)}
+        orphans: set[int] = set()
+        for xref in range(1, doc.xref_length()):
+            if xref in live:
+                continue
+            try:
+                if (not doc.xref_is_stream(xref)
+                        and doc.xref_get_key(xref, "Type") == ("name", "/Page")):
+                    orphans.add(xref)
+            except Exception:  # noqa: BLE001
+                continue
+        if not orphans:
+            return
+        first = doc[0].xref if doc.page_count else None
+        target = {o: (self.replaced.get(o) if self.replaced.get(o) in live else first)
+                  for o in orphans}
+
+        def repl(m: re.Match) -> str:
+            x = int(m.group(1))
+            if x not in orphans:
+                return m.group(0)
+            return f"{target[x]} 0 R" if target[x] else "null"
+
+        for xref in range(1, doc.xref_length()):
+            if xref in orphans:
+                continue
+            try:
+                if doc.xref_is_stream(xref):
+                    continue
+                src = doc.xref_object(xref, compressed=True)
+            except Exception:  # noqa: BLE001
+                continue
+            if " R" not in src:
+                continue
+            new = _REF.sub(repl, src)
+            if new != src:
+                try:
+                    doc.update_object(xref, new)
+                except Exception:  # noqa: BLE001 - the emptied page below is still harmless
+                    continue
+        for xref in orphans:
+            try:
+                doc.update_object(xref, "<<>>")
+            except Exception:  # noqa: BLE001 - verification counts what is left
                 continue
 
     def sweep_strings(self) -> None:
@@ -1020,6 +1411,7 @@ class _PdfJob:
 
     def save_bytes(self) -> bytes:
         fitz = self.fitz
+        self.neutralize_orphans()
         kwargs: dict[str, Any] = dict(garbage=4, deflate=True, clean=True)
         enc = getattr(fitz, "PDF_ENCRYPT_NONE", None)
         if enc is not None:
@@ -1049,8 +1441,18 @@ class _PdfJob:
         did not flag, e.g. inside a longer word, or inside a replacement)."""
         allowed: dict[tuple[int, str], int] = {}
         norms = {v for v in (_norm_value(x) for x in self.values) if len(v) >= 2}
+        # Characters inside a removed finding of ANY row (seams and letter-spaced variants find
+        # values that the plain rows do not show as one word).
+        covered: set[int] = set()
         for info in self.pages:
-            parts = [row.result.text if row.result is not None else row.text
+            for row in info.rows:
+                if row.result is None:
+                    continue
+                for rep in row.result.replacements:
+                    if rep.action != "keep":
+                        covered.update(id(ch) for ch in row.chars[rep.start:rep.end])
+        for info in self.pages:
+            parts = ["".join("\x00" if id(ch) in covered else ch.c for ch in row.chars)
                      for row in info.rows if not row.seam]
             parts += [h[0] for h in self.intended.get(info.index, [])]   # what we meant to write
             text = _norm_value("\n".join(parts))
@@ -1077,6 +1479,7 @@ class _PdfJob:
                     doc_level += 1
             if out.embfile_count():
                 doc_level += 1
+            doc_level += _leftover_objects(out)
             try:
                 if (out.get_xml_metadata() or "").strip():
                     doc_level += 1
@@ -1089,6 +1492,7 @@ class _PdfJob:
                     for _, _, t in toks:
                         tn = _norm_value(t)
                         strings += sum(1 for nv in norms if nv in tn)
+                strings += _unshown_stream_hits(out, self.values)
             toc_out = _norm_value("\n".join(str(t[1]) for t in out.get_toc()))
             toc_meant = _norm_value("\n".join(str(t[1]) for t in self.toc))
             for nv in {_norm_value(v) for v in self.values}:
@@ -1136,6 +1540,20 @@ class _PdfJob:
                      f"field names, layer names, page labels ...)")
         if n.get("xfa"):
             w.append("XFA 양식 데이터를 제거했습니다 (XFA form data removed)")
+        if n.get("hidden_annot"):
+            k = n["hidden_annot"]
+            w.append(f"숨겨진/인쇄 전용 주석 {k}개를 삭제했습니다 (검사할 수 없는 내용) ({k} hidden or "
+                     f"print-only annotation(s) removed: their text cannot be checked)")
+        if n.get("signature"):
+            k = n["signature"]
+            w.append(f"전자서명 {k}개를 제거했습니다 (서명자 이름·인증서 포함, 편집 후에는 어차피 무효) "
+                     f"({k} digital signature(s) removed: they hold the signer's name and "
+                     f"certificate, and are invalid after editing anyway)")
+        if n.get("masked_pages"):
+            pages = n["masked_pages"]
+            w.append(f"{_pages_text(pages)}쪽은 투명/마스크 그림이나 윤곽선으로 바뀐 글자 속에 개인정보가 있어 "
+                     f"그림으로 다시 만들었습니다 (page(s) {_pages_text(pages)}: personal data inside "
+                     f"a masked image or text drawn as outlines; rebuilt as an image)")
         if n.get("ocg"):
             w.append("숨겨진 레이어를 모두 보이게 바꿔 함께 검사했습니다 (hidden layers were made visible "
                      "so they could be checked)")
@@ -1244,6 +1662,107 @@ def _object_strings(doc: Any) -> list[tuple[int, str, list[tuple[int, int, str]]
         if toks:
             out.append((xref, src, toks))
     return out
+
+
+_REF = re.compile(r"(?<![\d.])(\d+) \d+ R(?![A-Za-z])")
+MAX_SCAN_STREAM = 32 * 1024 * 1024
+_BINARY_FILTERS = ("/DCTDecode", "/JPXDecode", "/JBIG2Decode", "/CCITTFaxDecode")
+
+
+def _drop_annotations(page: Any) -> None:
+    """Delete every annotation and form field of a page that is about to be replaced."""
+    try:
+        for w in list(page.widgets()):
+            page.delete_widget(w)
+    except Exception:  # noqa: BLE001 - neutralize_orphans / verification still apply
+        pass
+    try:
+        for a in list(page.annots()):
+            page.delete_annot(a)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _leftover_objects(doc: Any) -> int:
+    """Embedded-file streams with content and page objects outside the page tree."""
+    live = {p.xref for p in doc}
+    n = 0
+    for xref in range(1, doc.xref_length()):
+        try:
+            typ = doc.xref_get_key(xref, "Type")
+            if typ == ("name", "/EmbeddedFile") and doc.xref_is_stream(xref) and doc.xref_stream(xref):
+                n += 1
+            elif typ == ("name", "/Page") and xref not in live and not doc.xref_is_stream(xref):
+                n += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return n
+
+
+def _shown_objects(doc: Any) -> set[int]:
+    """Objects reachable from the pages (contents, resources, annotations and their
+    appearances): their text is verified by text extraction."""
+    seen: set[int] = set()
+    stack = [p.xref for p in doc]
+    while stack:
+        xref = stack.pop()
+        if xref in seen or xref <= 0 or xref >= doc.xref_length():
+            continue
+        seen.add(xref)
+        try:
+            src = doc.xref_object(xref, compressed=True)
+        except Exception:  # noqa: BLE001
+            continue
+        stack.extend(int(m.group(1)) for m in _REF.finditer(src))
+    return seen
+
+
+def _value_patterns(values: set[str]) -> list[bytes]:
+    out: set[bytes] = set()
+    for v in values:
+        v = v.strip()
+        if len(_norm_value(v)) < 3:
+            continue
+        for enc in ("utf-8", "utf-16-be"):
+            try:
+                raw = v.encode(enc)
+            except UnicodeEncodeError:
+                continue
+            if len(raw) >= 4:
+                out.add(raw)
+        hx = v.encode("utf-16-be").hex()
+        out.update((hx.encode(), hx.upper().encode()))
+    return sorted(out, key=len, reverse=True)
+
+
+def _unshown_stream_hits(doc: Any, values: set[str]) -> int:
+    """Removed values found in streams that no page shows (attachments, orphaned content,
+    print-only appearances ...): text extraction never sees those."""
+    pats = _value_patterns(values)
+    if not pats:
+        return 0
+    shown = _shown_objects(doc)
+    hits = 0
+    for xref in range(1, doc.xref_length()):
+        try:
+            if xref in shown or not doc.xref_is_stream(xref):
+                continue
+            if doc.xref_get_key(xref, "Subtype") == ("name", "/Image"):
+                continue
+            filt = doc.xref_get_key(xref, "Filter")[1]
+            if any(f in filt for f in _BINARY_FILTERS):
+                continue
+            if any(doc.xref_get_key(xref, k)[0] != "null" for k in ("Length1", "Length2", "N")):
+                continue      # font programs, ICC profiles
+            if doc.xref_get_key(xref, "Subtype")[1] in ("/Type1C", "/CIDFontType0C", "/OpenType"):
+                continue
+            data = doc.xref_stream(xref) or b""
+        except Exception:  # noqa: BLE001
+            continue
+        if len(data) > MAX_SCAN_STREAM:
+            data = data[:MAX_SCAN_STREAM]
+        hits += sum(1 for p in pats if p in data)
+    return hits
 
 
 def _draw_overlays(page: Any, overlays: list[tuple[Any, str]], fitz: Any) -> None:

@@ -11,7 +11,13 @@ Engines (``cfg.ocr["engine"]``):
   with ``kor+eng``, several page-segmentation passes run in parallel (one thread each). Words
   come with their own boxes; character boxes inside a word are estimated from width weights.
   The image is passed through stdin, so no temporary file holds it.
-* ``"auto"`` (default) - on macOS livetext, then vision, then tesseract; elsewhere tesseract.
+* ``"auto"`` (default) - on macOS livetext (macOS 14+), then vision, then tesseract; elsewhere
+  tesseract.
+
+Apple's frameworks report many failures (a time-out, an error inside the completion handler, a
+call from a thread without a run loop) as an EMPTY result, so "no text" from Live Text or Vision
+is not trusted on its own: another engine has to confirm it (a second engine finding nothing, or
+tesseract), otherwise :class:`OcrError` is raised. Live Text is only used on the main thread.
 
 Every engine returns :class:`OcrLine` objects whose ``text`` is the words joined by single
 spaces and whose :meth:`OcrLine.char_boxes` gives one box per character of ``text`` (spaces
@@ -23,6 +29,9 @@ Config keys (``[ocr]`` in config.toml; all optional)::
     engine = "auto"            # auto | livetext | vision | tesseract
     lang = "kor+eng"           # tesseract languages
     psm = [4, 6, 11]           # tesseract page segmentation modes; all passes are combined
+    adaptive = "auto"          # one more tesseract pass (psm 11) with adaptive (Sauvola)
+                               # thresholding for text on coloured bars / UI backgrounds;
+                               # auto: when much of the picture is neither white nor dark
     upscale = "auto"           # auto: x2 (LANCZOS) when the image is < 1000 px high; or true/false
     invert = "auto"            # auto: invert mostly-dark (dark mode) images before tesseract
     min_conf = 30              # tesseract words below this are flagged (never dropped if non-empty)
@@ -31,6 +40,7 @@ Config keys (``[ocr]`` in config.toml; all optional)::
     languages = ["ko-KR", "en-US"]   # Apple Vision / Live Text language preference
     recognition_level = "accurate"   # Apple Vision
     space_gap = 0.25           # Live Text: gap (x char height) above which a space is inserted
+                               # (only where Live Text's own line strings cannot be aligned)
 
 Nothing here sends data anywhere: tesseract runs as a local process, ocrmac uses the OS.
 """
@@ -38,12 +48,15 @@ from __future__ import annotations
 
 import functools
 import io
+import math
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -68,6 +81,11 @@ UPSCALE_BELOW_PX = 1000
 DARK_MEAN = 100            # mean luminance (0-255) below which an image counts as dark mode
 LOW_CONF_WARN_RATIO = 0.3  # warn when this share of words is below min_conf
 SPACE_WEIGHT = 0.3         # width of a space in em, for laying out estimated boxes
+APPLE_ENGINES = ("livetext", "vision")
+ADAPTIVE_PSM = 11          # extra tesseract pass with adaptive thresholding (coloured UI bars)
+ADAPTIVE_CONFIG = "-c thresholding_method=2"   # Sauvola (tesseract 5); older versions ignore it
+OSD_MIN_CONF = 0.5         # tesseract orientation confidence needed to report a rotation
+TINTED_SHARE = 0.15        # adaptive="auto": share of mid-tone pixels (coloured backgrounds)
 
 TESSERACT_HINT = (
     "Tesseract OCR이 필요합니다 / Tesseract OCR is required: "
@@ -76,11 +94,24 @@ TESSERACT_HINT = (
 )
 OCRMAC_HINT = (
     "Apple Vision/Live Text OCR에는 ocrmac이 필요합니다 (macOS 전용) / "
-    "Apple Vision OCR needs ocrmac (macOS only): pip install ocrmac"
+    "Apple Vision OCR needs ocrmac (macOS only): pipx inject deid-kit ocrmac "
+    "(without pipx: pip install ocrmac)"
 )
 LOW_CONF_WARNING = (
     "OCR 신뢰도가 낮은 글자가 많음 — 결과 이미지를 직접 확인하세요 "
     "(many low-confidence OCR words; please check the output by eye)"
+)
+
+
+EMPTY_UNCONFIRMED = (
+    "Apple OCR(Live Text/Vision)이 글자를 찾지 못했지만, 실패해도 같은 결과가 나오므로 다른 OCR 엔진으로 "
+    "확인해야 합니다 — Tesseract를 설치하세요: brew install tesseract tesseract-lang "
+    "(Apple OCR returned no text, which is also how it reports failures, and no other OCR engine "
+    "could confirm it; install tesseract)"
+)
+LIVETEXT_THREAD = (
+    "Live Text는 프로그램의 주 스레드에서만 동작합니다 — [ocr] engine = \"auto\" 또는 \"vision\"을 "
+    "쓰세요 (Live Text only works on the main thread; use engine = \"auto\" or \"vision\")"
 )
 
 
@@ -178,6 +209,7 @@ class OcrLine:
     box: Box = (0.0, 0.0, 0.0, 0.0)
     engine: str = ""
     estimated: bool = False   # True when character boxes are estimated across a whole line
+    aligned: bool = False     # estimated, but word positions were taken from the ink
 
     @classmethod
     def from_words(cls, words: Sequence[OcrWord], engine: str = "",
@@ -425,7 +457,8 @@ def engine_status() -> dict[str, str]:
             ver = _macos_version()
             out["livetext"] = ("ok" if ver >= (14,) else
                                "unavailable: macOS 14 (Sonoma) 이상 필요 / needs macOS 14+")
-            out["vision"] = "ok"
+            out["vision"] = ("ok" if not ver or ver >= (13,) else
+                             "incomplete: 한국어 인식은 macOS 13 이상 필요 / Korean needs macOS 13+")
         except OcrError as e:
             out["livetext"] = out["vision"] = f"missing: {e}"
     else:
@@ -451,7 +484,12 @@ def available_engines() -> list[str]:
 
 
 def _auto_order() -> list[str]:
-    return ["livetext", "vision", "tesseract"] if _is_macos() else ["tesseract"]
+    if not _is_macos():
+        return ["tesseract"]
+    # Live Text (VisionKit's image analyzer) arrived with macOS 13 but deid needs the macOS 14
+    # behaviour (what `deid doctor` checks); an unknown version skips it too.
+    order = ["livetext"] if _macos_version() >= (14,) else []
+    return order + ["vision", "tesseract"]
 
 
 # ---------------------------------------------------------------------- entry points
@@ -466,11 +504,24 @@ def ocr_image(img: "Image.Image", cfg: "Config | None" = None,
         name = "vision"
     if name not in ENGINES:
         raise OcrError(f"알 수 없는 OCR 엔진 / unknown OCR engine {name!r}; use one of {ENGINES}")
-    if name != "auto":
-        return _run_engine(name, img, opts)
+    if name == "auto":
+        return _first_with_text(_auto_order(), img, opts)
+    res = _run_engine(name, img, opts)   # an explicitly chosen engine's errors are reported
+    if res.lines or name not in APPLE_ENGINES:
+        return res
+    # Apple frameworks report failures as an empty result: confirm "no text" elsewhere (and use
+    # what another engine finds, if anything).
+    others = [c for c in _auto_order() if c != name]
+    return _first_with_text(others, img, opts, empty=res, empties=[name])
+
+
+def _first_with_text(order: Sequence[str], img: "Image.Image", opts: dict,
+                     empty: OcrResult | None = None, empties: Sequence[str] = ()) -> OcrResult:
+    """The first result with text among `order`. An empty result is returned only when it is
+    confirmed: tesseract found nothing (it reports failures as errors) or two engines agree."""
     errors: list[str] = []
-    result: OcrResult | None = None
-    for cand in _auto_order():
+    seen = list(empties)
+    for cand in order:
         try:
             res = _run_engine(cand, img, opts)
         except OcrError as e:  # e.g. Live Text unsupported on this macOS version
@@ -478,9 +529,12 @@ def ocr_image(img: "Image.Image", cfg: "Config | None" = None,
             continue
         if res.lines:
             return res
-        result = result or res   # empty: let a later engine have a look before giving up
-    if result is not None:
-        return result
+        seen.append(cand)
+        empty = empty or res   # empty: let a later engine have a look before giving up
+    if empty is not None:
+        if "tesseract" in seen or len(seen) >= 2 or not any(e in APPLE_ENGINES for e in seen):
+            return empty
+        raise OcrError(EMPTY_UNCONFIRMED + (" | " + " | ".join(errors) if errors else ""))
     raise OcrError("사용 가능한 OCR 엔진이 없습니다 / no usable OCR engine: " + " | ".join(errors))
 
 
@@ -625,6 +679,28 @@ def lines_from_tesseract(data: dict, scale: float = 1.0, engine: str = "tesserac
     return lines, n_words, n_low
 
 
+def _flag(value: Any, default: bool = True) -> bool:
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("no", "off", "false", "0"):
+            return False
+        if s in ("yes", "on", "true", "1"):
+            return True
+        return default
+    return default if value is None else bool(value)
+
+
+def _adaptive_wanted(gray: "Image.Image", mode: Any) -> bool:
+    """Run the adaptive-threshold pass? auto: when at least TINTED_SHARE of the (prepared,
+    grayscale) picture is mid-tone background - UI bars, chat backgrounds, coloured cells -
+    where tesseract's single global threshold drops text; plain documents skip it."""
+    if not (isinstance(mode, str) and mode.strip().lower() == "auto"):
+        return _flag(mode)
+    hist = gray.histogram()[:256]
+    total = sum(hist) or 1
+    return sum(hist[100:236]) / total >= TINTED_SHARE
+
+
 def _ocr_tesseract(img: "Image.Image", opts: dict) -> OcrResult:
     lang = str(opts.get("lang") or DEFAULT_LANG)
     cmd = _check_tesseract(lang, opts.get("tesseract_cmd") or None)
@@ -632,21 +708,27 @@ def _ocr_tesseract(img: "Image.Image", opts: dict) -> OcrResult:
     timeout = float(opts.get("timeout", 180) or 0) or None
     extra = str(opts.get("tesseract_config", "") or "")
     prepared, factor = prepare_for_tesseract(img, opts)
-    psms = _psm_list(opts.get("psm"))
-    workers = max(1, min(len(psms), os.cpu_count() or 1))
+    # (psm, extra config, engine label). Tesseract binarizes with one global threshold, which
+    # loses text on coloured UI bars (messenger title / sender name on a blue-grey background
+    # next to white bubbles): an adaptive-threshold pass reads those.
+    passes = [(p, extra, f"tesseract/psm{p}") for p in _psm_list(opts.get("psm"))]
+    if _adaptive_wanted(prepared, opts.get("adaptive", "auto")):
+        passes.append((ADAPTIVE_PSM, f"{extra} {ADAPTIVE_CONFIG}".strip(),
+                       f"tesseract/psm{ADAPTIVE_PSM}a"))
+    workers = max(1, min(len(passes), os.cpu_count() or 1))
 
-    def run(psm: int) -> dict:
-        return tesseract_data(prepared, lang, psm, extra, timeout, cmd)
+    def run(job: tuple[int, str, str]) -> dict:
+        return tesseract_data(prepared, lang, job[0], job[1], timeout, cmd)
 
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            datas = list(pool.map(run, psms))
+            datas = list(pool.map(run, passes))
     else:
-        datas = [run(p) for p in psms]
+        datas = [run(p) for p in passes]
     lines: list[OcrLine] = []
     n_words = n_low = 0
-    for psm, data in zip(psms, datas):
-        got, nw, nl = lines_from_tesseract(data, factor, f"tesseract/psm{psm}", min_conf)
+    for (_, _, label), data in zip(passes, datas):
+        got, nw, nl = lines_from_tesseract(data, factor, label, min_conf)
         lines += got
         n_words += nw
         n_low += nl
@@ -654,6 +736,48 @@ def _ocr_tesseract(img: "Image.Image", opts: dict) -> OcrResult:
     if n_words >= 5 and n_low / n_words > LOW_CONF_WARN_RATIO:
         res.warnings.append(LOW_CONF_WARNING)
     return res
+
+
+def detect_rotation(img: "Image.Image", cfg: "Config | None" = None) -> int:
+    """Clockwise rotation (90, 180 or 270) that turns the text in `img` upright, from tesseract's
+    orientation detection (OSD); 0 when the text is upright or the orientation is unknown
+    (tesseract or its osd data missing, too little text). Never raises."""
+    opts = dict(getattr(cfg, "ocr", None) or {})
+    try:
+        cmd = opts.get("tesseract_cmd") or None
+        if cmd:
+            cmd = shutil.which(cmd) or (cmd if os.path.isfile(cmd) else None)
+        cmd = cmd or _find_tesseract()
+        if cmd is None:
+            return 0
+        have = _tesseract_langs(cmd)
+        if have is not None and "osd" not in have:
+            return 0
+        prepared, _ = prepare_for_tesseract(img, opts)
+        buf = io.BytesIO()
+        prepared.save(buf, format="PNG")
+        timeout = float(opts.get("timeout", 180) or 0) or None
+        proc = _run_cmd([cmd, "stdin", "stdout", "--psm", "0", "-l", "osd"], timeout,
+                        buf.getvalue())
+    except (OcrError, OSError, ValueError):
+        return 0
+    if proc.returncode != 0:
+        return 0   # e.g. "Too few characters"
+    return parse_osd(proc.stdout.decode("utf-8", "replace"))
+
+
+def parse_osd(out: str) -> int:
+    """Clockwise correction from tesseract --psm 0 output ("Rotate: 90"), 0 if not confident."""
+    rot = re.search(r"Rotate:\s*(\d+)", out)
+    conf = re.search(r"Orientation confidence:\s*([0-9.]+)", out)
+    if not rot:
+        return 0
+    deg = int(rot.group(1)) % 360
+    if deg not in (90, 180, 270):
+        return 0
+    if conf is not None and _num(conf.group(1), 0.0) < OSD_MIN_CONF:
+        return 0
+    return deg
 
 
 # ---------------------------------------------------------------------- Apple (ocrmac)
@@ -703,16 +827,127 @@ def _ocr_vision(img: "Image.Image", opts: dict) -> OcrResult:
                     recognition_level=str(opts.get("recognition_level", "accurate")),
                     language_preference=_languages(opts))
     lines = []
+    gray = rgb.convert("L")
     for text, conf, box in _parse_ocrmac(ocr.recognize(px=True)):
-        lines.append(line_from_box(text, box, conf, engine="vision"))
+        lines.append(line_from_box(text, box, conf, engine="vision", gray=gray))
     lines.sort(key=lambda ln: (ln.box[1], ln.box[0]))
     return OcrResult(lines, "vision", words=sum(len(ln.words) for ln in lines))
 
 
-def line_from_box(text: str, box: Box, conf: float = -1.0, engine: str = "") -> OcrLine:
-    """OcrLine for a whole-line result: words and character boxes estimated inside `box`."""
+INK_DIFF = 60              # grey-level distance from the background that counts as ink
+INK_WIDTH_SPREAD = 3.0     # a word's ink may be this many times wider/narrower than estimated
+INK_GAP_WEIGHT = 1.0       # preference for cutting words at wide blank gaps
+
+
+def ink_runs(gray: "Image.Image", box: Box) -> list[tuple[int, int]]:
+    """[x1, x2) column ranges inside `box` that contain ink (pixels clearly unlike the most
+    common grey of the box, so dark mode works too), in picture coordinates."""
+    width, height = gray.size
+    cx1, cx2 = max(0, math.floor(box[0])), min(width, math.ceil(box[2]))
+    cy1, cy2 = max(0, math.floor(box[1])), min(height, math.ceil(box[3]))
+    if cx2 - cx1 < 2 or cy2 - cy1 < 2:
+        return []
+    crop = gray.crop((cx1, cy1, cx2, cy2))
+    hist = crop.histogram()
+    bg = max(range(256), key=hist.__getitem__)
+    mask = crop.point([255 if abs(v - bg) > INK_DIFF else 0 for v in range(256)])
+    cols = mask.resize((cx2 - cx1, 1), _box_filter()).tobytes()
+    runs: list[list[int]] = []
+    for x, v in enumerate(cols):
+        if v:
+            if runs and runs[-1][1] == cx1 + x:
+                runs[-1][1] = cx1 + x + 1
+            else:
+                runs.append([cx1 + x, cx1 + x + 1])
+    return [(a, b) for a, b in runs]
+
+
+def ink_word_extents(gray: "Image.Image", box: Box, words: Sequence[str]
+                     ) -> list[tuple[float, float]] | None:
+    """Left/right ink edge of each word of a whole-line OCR result.
+
+    Spreading characters over a line box by fixed width weights drifts along long lines
+    (real fonts differ), so the end of a span in the middle of a 1000 px line can lie 1-2
+    characters right of its estimate and stay readable after painting. Here the ink columns
+    of `box` are split into len(words) groups (dynamic programming): each group's width
+    should match its word's width weight and groups should meet at wide blank gaps. None
+    (keep the plain estimate) when there are fewer ink groups than words or no split fits
+    (underlines, table borders, touching words).
+    """
+    n = len(words)
+    runs = ink_runs(gray, box) if n >= 2 else []
+    m = len(runs)
+    if n < 2 or m < n:
+        return None
+    weights = [sum(char_weight(c) for c in w) for w in words]
+    if min(weights) <= 0:
+        return None
+    scale = (runs[-1][1] - runs[0][0]) / (sum(weights) + (n - 1) * SPACE_WEIGHT)
+    if scale <= 0:
+        return None
+    gaps = [runs[i + 1][0] - runs[i][1] for i in range(m - 1)]
+    widest = max(gaps) or 1
+    inf = float("inf")
+    cost = [[inf] * (m + 1) for _ in range(n + 1)]
+    back = [[-1] * (m + 1) for _ in range(n + 1)]
+    cost[0][0] = 0.0
+    for j in range(1, n + 1):
+        want = weights[j - 1] * scale
+        for i in range(j, m - (n - j) + 1):
+            best, arg = inf, -1
+            for k in range(i - 1, j - 2, -1):        # word j-1 = runs k .. i-1
+                if cost[j - 1][k] == inf:
+                    continue
+                w = runs[i - 1][1] - runs[k][0]
+                if w > want * INK_WIDTH_SPREAD:
+                    break
+                if w * INK_WIDTH_SPREAD < want:
+                    continue
+                c = cost[j - 1][k] + math.log(w / want) ** 2
+                if k:
+                    c += INK_GAP_WEIGHT * (1.0 - gaps[k - 1] / widest)
+                if c < best:
+                    best, arg = c, k
+            cost[j][i], back[j][i] = best, arg
+    if cost[n][m] == inf:
+        return None
+    out: list[tuple[float, float]] = []
+    i = m
+    for j in range(n, 0, -1):
+        k = back[j][i]
+        out.append((float(runs[k][0]), float(runs[i - 1][1])))
+        i = k
+    return out[::-1]
+
+
+def _box_filter() -> Any:
+    from PIL import Image
+
+    return getattr(Image, "Resampling", Image).BOX
+
+
+def line_from_box(text: str, box: Box, conf: float = -1.0, engine: str = "",
+                  gray: "Image.Image | None" = None) -> OcrLine:
+    """OcrLine for a whole-line result: words and character boxes estimated inside `box`.
+
+    With `gray` (the picture the box refers to, mode "L") word positions come from the ink
+    (:func:`ink_word_extents`); characters are then spread inside each word only."""
     norm = " ".join(text.split())
-    chars = split_box(box, norm)
+    pieces = norm.split(" ")
+    extents = None
+    if gray is not None and len(pieces) > 1:
+        try:
+            extents = ink_word_extents(gray, box, pieces)
+        except Exception:  # noqa: BLE001 - refinement is optional, the estimate still works
+            extents = None
+    if extents:
+        chars = []
+        for k, (piece, (ex1, ex2)) in enumerate(zip(pieces, extents)):
+            if k:
+                chars.append((ex1, box[1], ex1, box[3]))       # the space before the word
+            chars += split_box((ex1, box[1], ex2, box[3]), piece)
+    else:
+        chars = split_box(box, norm)
     words, pos = [], 0
     for piece in norm.split(" "):
         cb = chars[pos:pos + len(piece)]
@@ -720,20 +955,49 @@ def line_from_box(text: str, box: Box, conf: float = -1.0, engine: str = "") -> 
         pos += len(piece) + 1
     line = OcrLine.from_words(words, engine, estimated=True)
     line.box = box
+    line.aligned = bool(extents)
     return line
 
 
+def _livetext_ocr(om: Any, rgb: "Image.Image", opts: dict, unit: str) -> Any:
+    """ocrmac OCR object for Live Text at `unit` ("token" or "line"); None for "line" when this
+    ocrmac has no `unit` keyword. ocrmac 1.0.0 has no `unit` at all, and its Live Text output is
+    already per character (what unit="token" gives in 1.0.1+)."""
+    langs = _languages(opts)
+    attempts: list[dict] = [dict(language_preference=langs, unit=unit), dict(unit=unit)]
+    if unit == "token":
+        attempts += [dict(language_preference=langs), {}]
+    error: TypeError | None = None
+    for kw in attempts:
+        try:
+            return om.OCR(rgb, framework="livetext", **kw)
+        except TypeError as e:
+            error = e
+    if unit == "token" and error is not None:
+        raise error
+    return None
+
+
 def _ocr_livetext(img: "Image.Image", opts: dict) -> OcrResult:
+    # ocrmac waits for VisionKit's completion handler in a run loop of the calling thread; on
+    # any other thread than the main one it returns an empty result at once (no text = fail
+    # open), so refuse instead (auto mode then uses Vision).
+    if threading.current_thread() is not threading.main_thread():
+        raise OcrError(LIVETEXT_THREAD)
     om = _import_ocrmac()
     rgb = flatten_rgb(img)
-    try:
-        ocr = om.OCR(rgb, framework="livetext", language_preference=_languages(opts),
-                     unit="token")
-    except TypeError:
-        ocr = om.OCR(rgb, framework="livetext", unit="token")
-    tokens = _parse_ocrmac(ocr.recognize(px=True))
+    tokens = _parse_ocrmac(_livetext_ocr(om, rgb, opts, "token").recognize(px=True))
+    line_strings: list[tuple[str, float, Box]] = []
+    if tokens:
+        # Live Text knows where the spaces are (its line strings); the character tokens do not
+        # carry them. Without line strings spaces are guessed from the gaps between boxes.
+        try:
+            lo = _livetext_ocr(om, rgb, opts, "line")
+            line_strings = _parse_ocrmac(lo.recognize(px=True)) if lo is not None else []
+        except Exception:  # noqa: BLE001 - spacing is a bonus, the tokens are the result
+            line_strings = []
     gap = float(opts.get("space_gap", 0.25))
-    lines = group_tokens(tokens, gap_ratio=gap, engine="livetext")
+    lines = group_tokens(tokens, gap_ratio=gap, engine="livetext", line_strings=line_strings)
     return OcrResult(lines, "livetext", words=sum(len(ln.words) for ln in lines))
 
 
@@ -755,14 +1019,54 @@ def _v_overlap(a: Box, b: tuple[float, float]) -> float:
     return min(a[3], b[1]) - max(a[1], b[0])
 
 
+def _line_spacing(chars: Sequence[tuple[str, float, Box]],
+                  line_strings: Sequence[tuple[str, float, Box]]) -> dict[int, tuple[int, int, bool]]:
+    """char index -> (line id, position in line, a space follows) for the characters that can be
+    aligned with one of Live Text's own line strings: the characters whose centre lies in the
+    line's box, in x order, must spell exactly the line's text without its spaces."""
+    out: dict[int, tuple[int, int, bool]] = {}
+    if not line_strings or 2 * len(line_strings) > len(chars):
+        return out   # no line strings, or (sub-)word tokens again: nothing to learn
+    nfc = [unicodedata.normalize("NFC", c) for c, _, _ in chars]
+    centres = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for _, _, b in chars]
+    for lid, (text, _, box) in enumerate(line_strings):
+        norm = unicodedata.normalize("NFC", " ".join(text.split()))
+        target = norm.replace(" ", "")
+        if not target:
+            continue
+        h = max(box[3] - box[1], 0.0)
+        for slack in (0.0, 0.25 * h):    # a tight box first: the next line may start close by
+            cand = [i for i, (cx, cy) in enumerate(centres) if i not in out
+                    and box[0] - slack <= cx <= box[2] + slack and box[1] <= cy <= box[3]]
+            cand.sort(key=lambda i: (chars[i][2][0], chars[i][2][2]))
+            if len(cand) == len(target) and "".join(nfc[i] for i in cand) == target:
+                break
+        else:
+            continue
+        follows: list[bool] = []
+        for ch in norm:
+            if ch == " ":
+                follows[-1] = True
+            else:
+                follows.append(False)
+        for pos, i in enumerate(cand):
+            out[i] = (lid, pos, follows[pos])
+    return out
+
+
 def group_tokens(tokens: Iterable[tuple[str, float, Box]], gap_ratio: float = 0.25,
-                 engine: str = "livetext") -> list[OcrLine]:
+                 engine: str = "livetext",
+                 line_strings: Sequence[tuple[str, float, Box]] = ()) -> list[OcrLine]:
     """Group character-level boxes into lines (vertical overlap, then x order) and words.
 
-    A space is inserted between two characters when the horizontal gap exceeds
-    `gap_ratio` x the line's median character height.
+    Spaces come from `line_strings` (Live Text's own line texts with their boxes) where the
+    characters can be aligned with them; elsewhere a space is inserted between two characters
+    when the horizontal gap exceeds `gap_ratio` x the line's median character height.
     """
-    chars = _explode(tokens)
+    plain = _explode(tokens)
+    spacing = _line_spacing(plain, line_strings)
+    # (char, conf, box, index into `plain`)
+    chars = [(c, conf, box, i) for i, (c, conf, box) in enumerate(plain)]
     chars.sort(key=lambda t: ((t[2][1] + t[2][3]) / 2, t[2][0]))
     rows: list[dict] = []   # {"items": [...], "y": (median y1, median y2)}
     for item in chars:
@@ -790,7 +1094,7 @@ def group_tokens(tokens: Iterable[tuple[str, float, Box]], gap_ratio: float = 0.
         words: list[OcrWord] = []
         cur: list[tuple[str, float, Box]] = []
         for it in items:
-            if cur and it[2][0] - cur[-1][2][2] > gap_ratio * med_h:
+            if cur and _space_between(cur[-1], it, spacing, gap_ratio * med_h):
                 words.append(_word_from_chars(cur))
                 cur = []
             cur.append(it)
@@ -801,7 +1105,19 @@ def group_tokens(tokens: Iterable[tuple[str, float, Box]], gap_ratio: float = 0.
     return lines
 
 
-def _word_from_chars(items: Sequence[tuple[str, float, Box]]) -> OcrWord:
+def _space_between(a: tuple, b: tuple, spacing: dict[int, tuple[int, int, bool]],
+                   gap: float) -> bool:
+    """Word break between neighbouring characters a, b ((char, conf, box, index) items)."""
+    sa, sb = spacing.get(a[3]), spacing.get(b[3])
+    if sa is not None and sb is not None:
+        if sa[0] != sb[0]:
+            return True            # two of Live Text's lines side by side (columns)
+        if sb[1] == sa[1] + 1:
+            return sa[2]           # neighbours in one line string: its own space
+    return b[2][0] - a[2][2] > gap
+
+
+def _word_from_chars(items: Sequence[tuple]) -> OcrWord:
     boxes = [i[2] for i in items]
     confs = [i[1] for i in items if i[1] >= 0]
     return OcrWord("".join(i[0] for i in items), union_box(boxes) or boxes[0],

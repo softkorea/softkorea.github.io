@@ -21,10 +21,18 @@ Also handled:
 * properties: author, last modified by, title, subject, keywords, comments, category, company,
   manager and custom properties are cleared; document variables are removed; the saved
   thumbnail is blanked.
-* images: JPEG/PNG metadata (EXIF/GPS, text chunks) is stripped. Text inside images is only
-  checked with ``[ocr] docx_images = true`` (OCR); otherwise a warning says how many images were
-  not checked. Embedded objects (Excel sheets, OLE, alternative-format chunks) cannot be checked
-  and are emptied (warning). VBA macros are kept but not scanned (warning).
+* images: JPEG/PNG metadata (EXIF/GPS, text chunks) is stripped. Raster images are OCR'd and
+  PII is painted over: ``[ocr] docx_images = "auto"`` (default) OCRs every image big enough to
+  hold a screenshot (>= 40,000 pixels), ``true`` all of them, ``false`` none; a warning counts
+  the images that were not checked. Vector pictures (EMF/WMF - Word's "paste as picture" and
+  the visible preview of embedded objects - and SVG) carry their text as text: it is checked
+  with the document, an EMF/WMF showing personal data is replaced by an empty picture of the
+  same size, SVG text is replaced. Embedded objects (Excel sheets, OLE, alternative-format
+  chunks) cannot be checked and are emptied (warning). VBA macros are kept but not scanned
+  (warning).
+* picture names: Word stores the original file name / path of an inserted picture
+  (``pic:cNvPr name``, ``wp:docPr descr`` of Word 2007/2010), often "상처사진_<patient>.jpg";
+  values that are file names or paths become "file.<ext>".
 * safety net: after the main pass, any other text node that still contains a removed value is
   replaced too.
 
@@ -35,9 +43,11 @@ message. The generic pieces (:class:`ZipPackage`, :class:`TextSpec`, :class:`Par
 """
 from __future__ import annotations
 
+import gzip
 import io
 import posixpath
 import re
+import struct
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +56,14 @@ from urllib.parse import quote, unquote
 
 from .. import entities as E
 from ..types import AnonResult, Report, Span
-from .text import Batch, check_paths, write_atomic
+from .text import (
+    ZIP_TOO_BIG_ERROR,
+    Batch,
+    check_paths,
+    field_entities,
+    write_atomic,
+    zip_size_problem,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..anonymizer import Anonymizer
@@ -58,7 +75,14 @@ ANONYMOUS = "익명"
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"   # OLE compound file: .doc, .hwp, encrypted Office
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 RASTER_EXTS = frozenset({".png", ".jpg", ".jpeg", ".jpe", ".gif", ".bmp", ".tif", ".tiff", ".webp"})
-IMAGE_EXTS = RASTER_EXTS | {".emf", ".wmf", ".emz", ".wmz", ".svg", ".pict", ".pct", ".jxr", ".wdp"}
+VECTOR_EXTS = frozenset({".emf", ".wmf", ".emz", ".wmz", ".svg"})
+IMAGE_EXTS = RASTER_EXTS | VECTOR_EXTS | {".pict", ".pct", ".jxr", ".wdp"}
+# Extensions that make an attribute value a file name ("CT_홍길동_850315.png").
+FILE_NAME_EXTS = IMAGE_EXTS | {
+    ".heic", ".heif", ".pdf", ".doc", ".docx", ".hwp", ".hwpx", ".xls", ".xlsx", ".xlsm", ".csv",
+    ".ppt", ".pptx", ".txt", ".rtf", ".dcm", ".dicom", ".mp4", ".mov", ".avi", ".zip", ".png"}
+AUTO_OCR_PIXELS = 40_000     # [ocr] docx_images = "auto": OCR images of at least this many
+AUTO_OCR_MIN_SIDE = 24       # pixels (a screenshot; icons and bullets are skipped)
 CONTACT_SCHEMES = frozenset({"mailto", "tel", "sms", "callto", "facetime", "kakaotalk"})
 WEB_SCHEMES = frozenset({"http", "https", "ftp"})
 URL_SAFE = ":/?#[]@!$&'()*+,;=-._~"
@@ -118,6 +142,9 @@ class ZipPackage:
         try:
             with zipfile.ZipFile(path) as z:
                 infos = z.infolist()
+                problem = zip_size_problem(infos)
+                if problem:
+                    raise DocumentError(problem)
                 data: dict[str, bytes] = {}
                 for info in infos:
                     if info.filename in data or info.flag_bits & 0x1:   # duplicate / encrypted entry
@@ -128,6 +155,8 @@ class ZipPackage:
         except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, KeyError, RuntimeError,
                 NotImplementedError, EOFError, ValueError) as e:
             raise DocumentError(open_error) from e
+        except MemoryError as e:
+            raise DocumentError(ZIP_TOO_BIG_ERROR) from e
         return cls(infos, data)
 
     @property
@@ -189,7 +218,17 @@ def parse_xml(data: bytes, error: str) -> Any:
         raise DocumentError(error) from e
     if root is None:
         raise DocumentError(error)
+    # Entities are not expanded (no XXE / billion laughs), so text written as "&p;" would
+    # never reach the detector while the declaration (with the value) is written back.
+    # OOXML forbids DTDs and Word refuses such files: refuse them too.
+    dtd = root.getroottree().docinfo.internalDTD
+    if dtd is not None and any(True for _ in dtd.iterentities()):
+        raise DocumentError(DTD_ERROR)
     return root
+
+
+DTD_ERROR = ("문서 안에 XML 엔티티(DTD) 선언이 있어 안전하게 처리할 수 없습니다 "
+             "(an XML part declares entities (DTD); refused)")
 
 
 _DECL = re.compile(rb"^(?:\xef\xbb\xbf)?\s*<\?xml[^>]*\?>\s*")
@@ -615,6 +654,268 @@ def blank_image_like(data: bytes, ext: str) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------------------------
+# Vector pictures: EMF / WMF (+ gzip'd EMZ / WMZ). Word, Excel and Hangul store "paste as
+# picture" of a table or EMR screen, and the visible preview of an embedded object, as EMF; the
+# drawn text is stored as text records. We read that text (it is checked with the document) and
+# can replace a picture by an empty one with the same frame (same size on the page).
+# ---------------------------------------------------------------------------------------------
+
+_EMF_SIGNATURE = 0x464D4520                     # " EMF"
+_EMFPLUS = 0x2B464D45                           # "EMF+" GDI comment
+_EMR_BITMAP = frozenset({0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x72, 0x74})
+_WMF_PLACEABLE = b"\xd7\xcd\xc6\x9a"
+_WMF_BITMAP = frozenset({0x0922, 0x0B23, 0x0940, 0x0B41, 0x0D33, 0x0F43})
+_VECTOR_MAX = 64 * 1024 * 1024                  # unpacked EMZ/WMZ limit
+_MAX_STRINGS = 100_000
+
+
+def _printable_runs(s: str) -> list[str]:
+    """Readable pieces of a decoded string (control characters split it)."""
+    out = []
+    for run in re.split(r"[\x00-\x1f\x7f\ufffd\ud800-\udfff]+", s):
+        run = run.strip()
+        if len(run) >= 2 and any(ch.isalnum() for ch in run):
+            out.append(run)
+    return out
+
+
+def _utf16_scan(buf: bytes) -> list[str]:
+    return _printable_runs(buf[: len(buf) // 2 * 2].decode("utf-16-le", "replace"))
+
+
+def _decode(raw: bytes, wide: bool) -> str:
+    return raw.decode("utf-16-le", "replace") if wide else raw.decode("cp949", "replace")
+
+
+def _emr_text(rec: bytes, off: int, wide: bool, fixed_end: int) -> list[str]:
+    """An EMRTEXT structure at `off` of an EMF record; when its declared string is missing
+    or out of range, the bytes after the fixed part are scanned instead."""
+    if off + 16 <= len(rec):
+        chars, off_string = struct.unpack_from("<II", rec, off + 8)
+        width = 2 if wide else 1
+        if chars and 8 <= off_string and off_string + chars * width <= len(rec):
+            return [_decode(rec[off_string:off_string + chars * width], wide)]
+    tail = rec[fixed_end:]
+    if not tail:
+        return []
+    return _utf16_scan(tail) if wide else _printable_runs(tail.decode("cp949", "replace"))
+
+
+def _emfplus_texts(buf: bytes) -> list[str]:
+    out: list[str] = []
+    pos = 0
+    while pos + 12 <= len(buf):
+        rtype, _flags, size, dsize = struct.unpack_from("<HHII", buf, pos)
+        if size < 12 or pos + size > len(buf):
+            return out + _utf16_scan(buf[pos:])
+        data = buf[pos + 12:pos + 12 + min(dsize, size - 12)]
+        if rtype == 0x401C and len(data) >= 28:              # EmfPlusDrawString
+            n = struct.unpack_from("<I", data, 8)[0]
+            out.append(data[28:28 + 2 * n].decode("utf-16-le", "replace"))
+        elif rtype == 0x4036 and len(data) >= 16:            # EmfPlusDrawDriverString
+            opts, _m, n = struct.unpack_from("<III", data, 4)
+            if opts & 1:                                     # glyphs are characters
+                out.append(data[16:16 + 2 * n].decode("utf-16-le", "replace"))
+        pos += size
+    return out
+
+
+def _emf_texts(data: bytes) -> tuple[list[str], bool] | None:
+    n = len(data)
+    if n < 88:
+        return None
+    rtype, size = struct.unpack_from("<II", data, 0)
+    if rtype != 1 or struct.unpack_from("<I", data, 40)[0] != _EMF_SIGNATURE:
+        return None
+    texts: list[str] = []
+    bitmap = False
+    pos = 0
+    while pos + 8 <= n:
+        rtype, size = struct.unpack_from("<II", data, pos)
+        if size < 8 or pos + size > n:
+            return None
+        rec = data[pos:pos + size]
+        if rtype == 1 and size >= 72:                        # header: description string
+            nd, od = struct.unpack_from("<II", rec, 60)
+            if nd and od + 2 * nd <= size:
+                texts += _printable_runs(rec[od:od + 2 * nd].decode("utf-16-le", "replace"))
+        elif rtype in (0x53, 0x54):                          # EXTTEXTOUTA / W
+            texts += _emr_text(rec, 36, rtype == 0x54, 76)
+        elif rtype in (0x5F, 0x60) and size >= 40:           # POLYTEXTOUTA / W
+            count = min(struct.unpack_from("<I", rec, 36)[0], _MAX_STRINGS)
+            for i in range(count):
+                if 40 + 40 * (i + 1) > size:
+                    break
+                texts += _emr_text(rec, 40 + 40 * i, rtype == 0x60, 40 + 40 * count)
+        elif rtype == 0x6C and size >= 36:                   # SMALLTEXTOUT
+            chars, opts = struct.unpack_from("<II", rec, 16)
+            start = 36 if opts & 0x100 else 52
+            wide = not opts & 0x200
+            texts.append(_decode(rec[start:start + chars * (2 if wide else 1)], wide))
+        elif rtype == 0x46 and size >= 16:                   # GDI comment (EMF+ or app data)
+            dsize = struct.unpack_from("<I", rec, 8)[0]
+            payload = rec[12:12 + dsize]
+            if len(payload) >= 4 and struct.unpack_from("<I", payload, 0)[0] == _EMFPLUS:
+                texts += _emfplus_texts(payload[4:])
+            else:
+                texts += _utf16_scan(payload)
+        elif rtype in _EMR_BITMAP:
+            bitmap = True
+        pos += size
+        if rtype == 0x0E:                                    # EOF
+            break
+        if len(texts) > _MAX_STRINGS:
+            break
+    return texts, bitmap
+
+
+def _wmf_start(data: bytes) -> int | None:
+    pos = 22 if data[:4] == _WMF_PLACEABLE else 0
+    if pos + 18 > len(data):
+        return None
+    typ, hsize = struct.unpack_from("<HH", data, pos)
+    return pos if typ in (1, 2) and hsize == 9 else None
+
+
+def _wmf_texts(data: bytes) -> tuple[list[str], bool] | None:
+    start = _wmf_start(data)
+    if start is None:
+        return None
+    texts: list[str] = []
+    bitmap = False
+    pos, n = start + 18, len(data)
+    while pos + 6 <= n:
+        words, func = struct.unpack_from("<IH", data, pos)
+        size = words * 2
+        if size < 6 or pos + size > n:
+            return None
+        rec = data[pos:pos + size]
+        if func == 0x0521 and size >= 8:                     # TEXTOUT
+            length = struct.unpack_from("<H", rec, 6)[0]
+            texts.append(rec[8:8 + length].decode("cp949", "replace"))
+        elif func == 0x0A32 and size >= 14:                  # EXTTEXTOUT
+            length, opts = struct.unpack_from("<HH", rec, 10)
+            at = 14 + (8 if opts & 0x0006 else 0)
+            texts.append(rec[at:at + length].decode("cp949", "replace"))
+        elif func == 0x0626 and size >= 10:                  # ESCAPE (comments, embedded EMF)
+            texts += _utf16_scan(rec[10:])
+        elif func in _WMF_BITMAP:
+            bitmap = True
+        if func == 0:
+            break
+        pos += size
+        if len(texts) > _MAX_STRINGS:
+            break
+    return texts, bitmap
+
+
+def _gunzip(data: bytes) -> bytes | None:
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(data)) as g:
+            out = g.read(_VECTOR_MAX + 1)
+    except (OSError, EOFError, ValueError):
+        return None
+    return out if len(out) <= _VECTOR_MAX else None
+
+
+def vector_texts(data: bytes, ext: str) -> tuple[list[str], bool] | None:
+    """(texts drawn by an EMF/WMF/EMZ/WMZ picture, whether it also holds bitmaps), or None
+    when the picture cannot be read."""
+    ext = ext.lower()
+    if ext in (".emz", ".wmz"):
+        inner = _gunzip(data)
+        return None if inner is None else vector_texts(inner, ".emf" if ext == ".emz" else ".wmf")
+    if data[:4] == b"\x01\x00\x00\x00" and ext in (".emf", ".wmf"):
+        return _emf_texts(data)
+    if ext in (".emf", ".wmf"):
+        return _wmf_texts(data)
+    return None
+
+
+_EMF_EOF = struct.pack("<IIIII", 0x0E, 20, 0, 16, 20)
+
+
+def _blank_emf(data: bytes) -> bytes | None:
+    if len(data) < 88:
+        return None
+    rtype, size = struct.unpack_from("<II", data, 0)
+    if rtype != 1 or size < 88 or size > len(data) or size % 4:
+        return None
+    head = bytearray(data[:size])
+    nd, od = struct.unpack_from("<II", head, 60)
+    if nd and 88 <= od <= size:
+        end = min(size, od + 2 * nd)
+        head[od:end] = b"\0" * (end - od)          # description (application / picture name)
+    struct.pack_into("<II", head, 60, 0, 0)
+    struct.pack_into("<I", head, 68, 0)             # no palette
+    struct.pack_into("<IIH", head, 48, len(head) + len(_EMF_EOF), 2, 1)
+    return bytes(head) + _EMF_EOF
+
+
+def _blank_wmf(data: bytes) -> bytes | None:
+    start = _wmf_start(data)
+    if start is None:
+        return None
+    head = data[:start]
+    meta = bytearray(data[start:start + 18])
+    eof = struct.pack("<IH", 3, 0)
+    struct.pack_into("<IH", meta, 6, (18 + len(eof)) // 2, 0)   # size (words), no objects
+    struct.pack_into("<IH", meta, 12, 3, 0)                      # largest record, members
+    return head + bytes(meta) + eof
+
+
+# Smallest valid pictures, used when the original cannot be rebuilt.
+_MIN_EMF = (struct.pack("<II", 1, 88) + struct.pack("<4i", 0, 0, 1, 1)
+            + struct.pack("<4i", 0, 0, 100, 100) + struct.pack("<II", _EMF_SIGNATURE, 0x10000)
+            + struct.pack("<IIHHIII", 88 + 20, 2, 1, 0, 0, 0, 0)
+            + struct.pack("<4i", 1024, 768, 320, 240))
+_MIN_EMF = _MIN_EMF + _EMF_EOF
+_MIN_WMF = (struct.pack("<HHHIHIH", 1, 9, 0x300, 12, 0, 3, 0) + struct.pack("<IH", 3, 0))
+
+
+def blank_vector(data: bytes, ext: str) -> bytes:
+    """An empty EMF/WMF (EMZ/WMZ) picture with the frame of `data` (or a minimal one)."""
+    ext = ext.lower()
+    if ext in (".emz", ".wmz"):
+        inner = _gunzip(data) or b""
+        return gzip.compress(blank_vector(inner, ".emf" if ext == ".emz" else ".wmf"), mtime=0)
+    if data[:4] == b"\x01\x00\x00\x00":
+        return _blank_emf(data) or _MIN_EMF
+    return _blank_wmf(data) or (_MIN_EMF if ext == ".emf" else _MIN_WMF)
+
+
+def image_ocr_mode(value: Any) -> str:
+    """[ocr] docx_images / hwpx_images: "auto" (default) | "all" (true) | "off" (false)."""
+    if value is None:
+        return "auto"
+    if isinstance(value, bool):
+        return "all" if value else "off"
+    v = str(value).strip().lower()
+    if v in ("all", "true", "yes", "on", "1", "always"):
+        return "all"
+    if v in ("auto", ""):
+        return "auto"
+    return "off"
+
+
+_FILE_LIKE = re.compile(r"""(?:[A-Za-z]:[\\/]|\\\\|/|~[\\/]|file:)?[^\r\n<>|"*?]*\.([A-Za-z0-9]{2,5})""")
+
+
+_GENERIC_FILE = re.compile(r"(?i:image|picture|img|pic|file|그림|사진|이미지)[ _\-]?\d*\.[A-Za-z0-9]{2,5}")
+
+
+def file_name_like(value: Any) -> bool:
+    """'CT_홍길동_850315.png', 'C:\\Users\\me\\20240301 홍길동 상처.jpg' (a whole value)."""
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    m = _FILE_LIKE.fullmatch(v)
+    if not m or len(v) > 400:
+        return False
+    return "." + m.group(1).lower() in FILE_NAME_EXTS or bool(re.search(r"[\\/]", v))
+
+
+# ---------------------------------------------------------------------------------------------
 # Shared job: collect slots in XML parts, detect once, write back, safety net
 # ---------------------------------------------------------------------------------------------
 
@@ -638,6 +939,32 @@ def name_like(value: Any) -> str | None:
     return v
 
 
+def _apply_to(original: str, res: AnonResult) -> str:
+    """Apply the replacements of `res` (an anonymization of a same-length variant of
+    `original`, e.g. with "_" read as " ") to `original`."""
+    parts, pos = [], 0
+    for r in sorted(res.replacements, key=lambda r: r.start):
+        if r.replacement == r.original or r.start < pos:
+            continue
+        parts += (original[pos:r.start], r.replacement)
+        pos = r.end
+    parts.append(original[pos:])
+    return "".join(parts)
+
+
+def _ocr_worthy(data: bytes) -> bool:
+    """[ocr] *_images = "auto": OCR pictures big enough to be a screenshot or a photo of a
+    document; icons, bullets and small logos are skipped (and counted as not checked)."""
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+    except Exception:  # noqa: BLE001 - undecodable: let the OCR step report it
+        return True
+    return min(w, h) >= AUTO_OCR_MIN_SIDE and w * h >= AUTO_OCR_PIXELS
+
+
 class PackageJob:
     """Base for zip+XML document handlers (DOCX, HWPX)."""
 
@@ -659,6 +986,8 @@ class PackageJob:
         self.handled: set[tuple[Any, str]] = set()
         self._alive: list[Any] = []
         self.notes: dict[str, int] = {}
+        self.vector_state: dict[str, str] = {}   # picture part -> "ok" | "bitmap" | "unreadable"
+        self.vector_blank: set[str] = set()      # EMF/WMF parts that showed personal data
 
     # -- bookkeeping -------------------------------------------------------------------------
 
@@ -708,26 +1037,39 @@ class PackageJob:
         if pt.apply(res):
             self.dirty.add(name)
 
-    def attr_slot(self, name: str, el: Any, key: str) -> None:
+    def attr_slot(self, name: str, el: Any, key: str, underscores: bool = False) -> None:
+        """Check an attribute value. `underscores`: identifiers such as bookmark names
+        ("환자_홍길동_0101234") are detected with "_" read as a space."""
         value = el.get(key)
         if not value or not value.strip():
             return
         self._alive.append(el)
+        if file_name_like(value):     # an original picture file name / path
+            new = value if _GENERIC_FILE.fullmatch(value.strip()) else neutral_file_name(value)
+            if new != value:
+                el.set(key, new)
+                self.dirty.add(name)
+                self.note("file_name")
+            return
 
         def set_attr(res: AnonResult, el: Any = el, key: str = key) -> None:
-            el.set(key, res.text)
+            if underscores:
+                el.set(key, _apply_to(value, res))
+            else:
+                el.set(key, res.text)
             self.dirty.add(name)
-        self.slot(value, set_attr)
+        self.slot(value.replace("_", " ") if underscores else value, set_attr)
 
-    def element_slot(self, name: str, el: Any, entity: str | None = None) -> None:
-        value = el.text
+    def element_slot(self, name: str, el: Any, entity: str | None = None,
+                     attr: str = "text") -> None:
+        value = getattr(el, attr)
         if not value or not value.strip():
             return
-        self.handled.add((el, "text"))
+        self.handled.add((el, attr))
         self._alive.append(el)
 
         def set_text(res: AnonResult, el: Any = el) -> None:
-            el.text = res.text
+            setattr(el, attr, res.text)
             self.dirty.add(name)
         self.slot(value, set_text, entity)
 
@@ -795,37 +1137,107 @@ class PackageJob:
             if root is not None:
                 self.pkg.set(name, serialize_xml(root, self.pkg.get(name) or b""))
 
-    def image_parts(self, names: Iterable[str], option: bool) -> None:
-        """Strip image metadata; with `option`, OCR raster images and paint over PII."""
-        unchecked = 0
+    # -- pictures ------------------------------------------------------------------------------
+
+    def collect_vectors(self, names: Iterable[str]) -> None:
+        """Text of vector pictures becomes slots of the document's batch (call before the
+        batch runs): an EMF/WMF whose text holds personal data is blanked by image_parts,
+        SVG text nodes are rewritten like any XML part."""
+        for name in names:
+            ext = posixpath.splitext(name)[1].lower()
+            if ext not in VECTOR_EXTS:
+                continue
+            data = self.pkg.get(name) or b""
+            if ext == ".svg":
+                self.vector_state[name] = self._svg_slots(name)
+                continue
+            found = vector_texts(data, ext)
+            if found is None:
+                self.vector_state[name] = "unreadable"
+                continue
+            texts, bitmap = found
+            text = "\n".join(t.strip() for t in texts if t and t.strip())
+            if text:
+                self.slot(text, lambda res, n=name: self.vector_blank.add(n))
+            self.vector_state[name] = "bitmap" if bitmap else "ok"
+
+    def _svg_slots(self, name: str) -> str:
+        try:
+            root = self.tree(name)
+        except DocumentError:
+            return "unreadable"
+        state = "ok"
+        for el in root.iter():
+            lname = local(el.tag)
+            if not lname:
+                continue
+            for attr in ("text", "tail"):
+                value = getattr(el, attr)
+                if value and any(ch.isalnum() for ch in value):
+                    self.element_slot(name, el, attr=attr)
+            for key in list(el.attrib):
+                lk = local(key)
+                if lk in ("aria-label", "title", "alt", "label", "aria-description"):
+                    self.attr_slot(name, el, key)
+                elif lk == "href" and (el.get(key) or "").lstrip()[:11].lower() == "data:image/":
+                    state = "bitmap"      # an embedded raster image cannot be checked here
+        return state
+
+    def image_parts(self, names: Iterable[str], mode: Any) -> None:
+        """Strip image metadata, blank vector pictures that showed personal data and OCR
+        raster images (mode "auto" | "all" | "off", see image_ocr_mode)."""
+        if mode not in ("auto", "all", "off"):
+            mode = image_ocr_mode(mode)
+        unchecked = unreadable = no_ocr = 0
         for name in names:
             ext = posixpath.splitext(name)[1].lower()
             data = self.pkg.get(name) or b""
             if ext not in IMAGE_EXTS:
                 continue
-            if option and ext in RASTER_EXTS:
-                new = self._ocr_image(data, ext)
-                if new is None:
-                    unchecked += 1
-                else:
-                    data = new
-            else:
+            if ext in VECTOR_EXTS:
+                if name in self.vector_blank:
+                    self.pkg.set(name, blank_vector(data, ext))
+                    self.note("vector_blanked")
+                elif self.vector_state.get(name) != "ok":
+                    unreadable += 1
+                continue
+            if ext not in RASTER_EXTS:
+                unreadable += 1
+            elif mode == "off" or (mode == "auto" and not _ocr_worthy(data)):
                 unchecked += 1
+            else:
+                from ..ocr import OcrError
+                try:
+                    new = self._ocr_image(data, ext)
+                except OcrError:
+                    if mode == "all":     # OCR asked for explicitly: fail closed
+                        raise
+                    no_ocr += 1           # default "auto": warn instead of refusing the file
+                else:
+                    if new is None:
+                        unreadable += 1
+                    else:
+                        data = new
             self.pkg.set(name, strip_image_metadata(data, ext))
         if unchecked:
             self.note("image_unchecked", unchecked)
+        if unreadable:
+            self.note("image_unreadable", unreadable)
+        if no_ocr:
+            self.note("image_no_ocr", no_ocr)
 
     def _ocr_image(self, data: bytes, ext: str) -> bytes | None:
         from PIL import Image, ImageOps
 
-        from .image import redact_image
+        from .image import check_pixels, redact_image
 
         try:
             with Image.open(io.BytesIO(data)) as im:
+                check_pixels(im.size, self.cfg)      # before decoding: pixel bombs
                 im.load()
                 fmt = im.format
                 img = ImageOps.exif_transpose(im.copy())
-        except Exception:  # noqa: BLE001 - undecodable: counted as unchecked
+        except Exception:  # noqa: BLE001 - undecodable or too large: counted as unchecked
             return None
         out, rep = redact_image(img, self.detector, self.cfg, self.anonymizer)
         rep.warnings = [f"문서 안 이미지 / embedded image: {w}" for w in rep.warnings]
@@ -842,6 +1254,26 @@ class PackageJob:
             w.append(f"문서 안 이미지 {k}개는 검사하지 않음 — 그림 속 개인정보는 직접 확인하세요 "
                      f"({k} image(s) inside the document were NOT checked; set [ocr] "
                      f"{image_option_name} = true to OCR them)")
+        if n.get("image_no_ocr"):
+            k = n["image_no_ocr"]
+            w.append(f"OCR 엔진이 없어 문서 안 이미지 {k}개를 검사하지 못했습니다 — 'deid doctor'로 설치 "
+                     f"상태를 확인하고, 그림 속 개인정보는 직접 확인하세요 ({k} image(s) were NOT "
+                     f"checked: no working OCR engine; run 'deid doctor')")
+        if n.get("image_unreadable"):
+            k = n["image_unreadable"]
+            w.append(f"문서 안 그림 {k}개는 형식 때문에 확인할 수 없었습니다 (그림 속 이미지·알 수 없는 "
+                     f"형식) — 직접 확인하세요 ({k} picture(s) could not be checked: unsupported or "
+                     f"undecodable picture format, or a bitmap inside a vector picture; check "
+                     f"them yourself)")
+        if n.get("vector_blanked"):
+            k = n["vector_blanked"]
+            w.append(f"개인정보가 보이는 벡터 그림(EMF/WMF) {k}개를 빈 그림으로 바꿨습니다 "
+                     f"({k} vector picture(s) showing personal data were replaced by an empty "
+                     f"picture)")
+        if n.get("file_name"):
+            k = n["file_name"]
+            w.append(f"그림/개체에 저장된 원본 파일 이름 {k}개를 'file.확장자'로 바꿨습니다 "
+                     f"({k} original file name(s) of pictures/objects were neutralised)")
         if n.get("embedded"):
             k = n["embedded"]
             w.append(f"문서에 포함된 개체(엑셀 표, OLE 개체 등) {k}개는 검사할 수 없어 내용을 비웠습니다 "
@@ -896,6 +1328,7 @@ class _DocxJob(PackageJob):
             if re.fullmatch(r"customXml/item\d*\.xml", name):
                 self._custom_xml(name)
         self._collect_rels()
+        self.collect_vectors(self._media())
         self.batch.run()
         self._scrub_authors()
         self._scrub_props()
@@ -939,6 +1372,10 @@ class _DocxJob(PackageJob):
                         self.known_person(value)
 
     def _custom_xml(self, name: str) -> None:
+        """Custom XML data (content-control bindings, SharePoint/OneDrive library columns in
+        <documentManagement>): a leaf value is typed by its element name like a spreadsheet
+        header (<PatientName> -> PERSON, <ChartNo> -> MRN); a SharePoint <UserInfo> holds a
+        person (DisplayName) and an account id (AccountName), which is cleared."""
         try:
             root = self.tree(name)
         except DocumentError:
@@ -946,8 +1383,27 @@ class _DocxJob(PackageJob):
             self.note("embedded")
             return
         for el in root.iter():
-            if local(el.tag) and len(el) == 0 and el.text and any(c.isalpha() for c in el.text):
-                self.element_slot(name, el)
+            lname = local(el.tag)
+            if not lname or len(el) or not el.text or not el.text.strip():
+                continue
+            parent = el.getparent()
+            pname = local(parent.tag) if parent is not None else ""
+            if pname.lower() == "userinfo":
+                if lname.lower() in ("accountname", "loginname", "username", "account"):
+                    self.handled.add((el, "text"))
+                    self._alive.append(el)
+                    el.text = None
+                    self.dirty.add(name)
+                    continue
+                entity = (E.PERSON if lname.lower() == "displayname"
+                          else E.EMAIL if "mail" in lname.lower() else None)
+            else:
+                siblings = [local(c.tag) for c in parent] if parent is not None else [lname]
+                ents = field_entities(siblings, pname or None)
+                entity = ents[siblings.index(lname)] if lname in siblings else None
+            if entity is None and not any(c.isalpha() for c in el.text):
+                continue
+            self.element_slot(name, el, entity)
 
     # -- relationships -----------------------------------------------------------------------
 
@@ -1056,14 +1512,18 @@ class _DocxJob(PackageJob):
 
     # -- binary parts --------------------------------------------------------------------------
 
+    def _media(self) -> list[str]:
+        folder = self.folder + "/"
+        return [n for n in self.pkg.names if n.startswith(folder) and "/media/" in n]
+
     def _binary_parts(self) -> None:
         folder = self.folder + "/"
-        media = [n for n in self.pkg.names if n.startswith(folder) and "/media/" in n]
-        option = bool((self.cfg.ocr or {}).get("docx_images", False))
-        self.image_parts(media, option)
+        self.image_parts(self._media(), image_ocr_mode((self.cfg.ocr or {}).get("docx_images")))
         for name in self.pkg.names:
             base = posixpath.basename(name).lower()
-            if name.startswith(folder) and ("/embeddings/" in name or base.startswith("afchunk")):
+            activex = "/activex/" in name.lower() and base.endswith(".bin")   # control state
+            if name.startswith(folder) and ("/embeddings/" in name or activex
+                                            or base.startswith("afchunk")):
                 if self.pkg.get(name):
                     self.pkg.set(name, b"")
                     self.note("embedded")

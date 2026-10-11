@@ -10,7 +10,12 @@ re-identified locally, but the user should not have to type a passphrase for eve
   (``security ... -a deid -s deid-session``) when available, otherwise in a 0600 key file
   ``~/.config/deid/session.key``.
 * Expiry: the session starts fresh once it is older than ``DEID_SESSION_HOURS`` (default 12)
-  hours, so old patients' names do not pile up.
+  hours, so old patients' names do not pile up. An expired session is deleted together with
+  its key (:func:`purge_expired_session`) by every deid command, every pass of the folder
+  watcher and periodically by ``deid serve`` - not only when the next clip needs it.
+* A Keychain that cannot be read (locked, prompt cancelled, timeout) is an error, never "no
+  key": the vault is kept and :class:`SessionError` explains what to do, so tokens already
+  pasted into an LLM chat are never re-issued for a different person.
 * ``DEID_HOME`` puts every session file (vault, key, lock, watch state) in that directory and
   disables the Keychain (unless ``DEID_KEYCHAIN=1``) - used by tests.
 
@@ -110,11 +115,79 @@ def session_hours() -> float:
 
 
 def _mkdir_private(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+    make_private_dir(path, tighten=True)
+
+
+def make_private_dir(path: str | os.PathLike, *, tighten: bool = False) -> Path:
+    """Create `path` and every missing parent as an owner-only (0700) folder.
+
+    ``mkdir`` alone gives 0755 under the usual umask, and other local accounts can enter a
+    macOS home folder, so originals moved into ~/Deid/in would be readable by them. Folders
+    that already exist keep their permissions unless `tighten` is True.
+    """
+    path = Path(path).expanduser()
+    missing = []
+    p = path
+    while not p.exists() and p.parent != p:
+        missing.append(p)
+        p = p.parent
+    for d in reversed(missing):
+        try:
+            os.mkdir(d, 0o700)
+        except FileExistsError:
+            continue
+        try:
+            os.chmod(d, 0o700)   # mkdir's mode is filtered by the umask
+        except OSError:  # pragma: no cover
+            pass
+    if not path.is_dir():
+        path.mkdir(parents=True, exist_ok=True)   # raises the usual error (e.g. a file there)
+    if tighten:
+        try:
+            if os.stat(path).st_mode & 0o077:
+                os.chmod(path, 0o700)
+        except OSError:  # pragma: no cover - not our folder
+            pass
+    return path
+
+
+def _inside(path: Path, root: Path) -> bool:
     try:
-        os.chmod(path, 0o700)
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def prepare_work_dir(path: str | os.PathLike) -> Path:
+    """Create a folder deid writes patient files to (watch IN/OUT, screenshots) as 0700.
+
+    Inside the deid work folder (``user_dir()``, ~/Deid) existing folders are tightened too,
+    from ~/Deid down to `path`; elsewhere only the folders created here are made private (a
+    folder the user chose keeps the permissions they gave it).
+    """
+    path = Path(path).expanduser().absolute()
+    root = user_dir().absolute()
+    try:   # DEID_DIR=~ must never chmod the home folder itself
+        shared = root.resolve() in (Path.home().resolve(), Path(root.anchor))
+    except (OSError, RuntimeError):  # pragma: no cover
+        shared = True
+    if shared or not _inside(path, root):
+        return make_private_dir(path)
+    make_private_dir(root, tighten=True)
+    d = root
+    for part in path.resolve().relative_to(root.resolve()).parts:
+        d = d / part
+        make_private_dir(d, tighten=True)
+    return path
+
+
+def loose_permissions(path: str | os.PathLike) -> bool:
+    """True when an existing folder or file is accessible to the group or other accounts."""
+    try:
+        return os.name == "posix" and bool(os.stat(path).st_mode & 0o077)
     except OSError:
-        pass
+        return False
 
 
 # ---------------------------------------------------------------------- key storage
@@ -158,18 +231,51 @@ def _write_key_file(key: str) -> None:
         raise
 
 
+KEYCHAIN_ERROR = ("macOS 키체인을 열 수 없어 세션 보관함을 읽지 못했습니다 (잠김, 암호 창 취소, 응답 없음). "
+                  "로그인 키체인의 잠금을 풀고 다시 시도하세요. 보관함은 지우지 않았습니다. 계속 안 되면 "
+                  "'deid forget'으로 세션을 새로 시작할 수 있습니다 (the login Keychain is locked or did "
+                  "not answer; the session vault was kept)")
+
+
+def _keychain_key() -> tuple[str | None, bool]:
+    """(key, readable): the Keychain key or None; readable is False when the Keychain could
+    not be asked (locked, cancelled, timed out) - unlike a missing item, that says nothing
+    about whether a key exists."""
+    if not _use_keychain():
+        return None, True
+    try:
+        return mac.keychain_get(KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE), True
+    except mac.MacError:
+        return None, False
+
+
+def _session_keys() -> tuple[list[str], bool]:
+    """Every key that may open the vault (Keychain, key file) and whether the Keychain was
+    readable."""
+    kc, readable = _keychain_key()
+    keys = [k for k in (kc, _read_key_file()) if k]
+    return list(dict.fromkeys(keys)), readable
+
+
+def keychain_problem() -> str | None:
+    """A message when the Keychain holding the session key cannot be read right now."""
+    return None if _keychain_key()[1] else KEYCHAIN_ERROR
+
+
 def session_key(create: bool = False) -> str | None:
-    """The session passphrase (Keychain first, then the key file); None if there is none."""
-    if _use_keychain():
-        try:
-            key = mac.keychain_get(KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE)
-        except mac.MacError:
-            key = None
-        if key:
-            return key
+    """The session passphrase (Keychain first, then the key file); None if there is none.
+
+    With `create`, a missing key is created - but not while the Keychain is unreadable and a
+    vault exists (its key may be in the locked Keychain): that raises SessionError.
+    """
+    key, readable = _keychain_key()
+    if key:
+        return key
     key = _read_key_file()
     if key or not create:
         return key
+    if not readable and vault_file().exists():
+        raise SessionError(KEYCHAIN_ERROR)
     key = secrets.token_hex(KEY_BYTES)
     if _use_keychain():
         try:
@@ -221,24 +327,32 @@ def _wipe_vault() -> None:
 
 
 def load_session_vault() -> Vault:
-    """The current session's vault; a new empty one when none exists, it expired, or the key
-    no longer opens it (the stale file is deleted)."""
+    """The current session's vault; a new empty one when none exists, it expired (the vault
+    and its key are deleted), or no key opens it (the stale file is deleted).
+
+    Raises SessionError, keeping the vault, when the Keychain could not be read and no other
+    key opens the vault.
+    """
     with _THREAD_LOCK:
         if not vault_file().exists():
             _unlink(meta_file())
             return Vault()
         if _expired():
-            _wipe_vault()
+            forget_session()
             return Vault()
-        key = session_key(create=False)
-        if not key:
-            _wipe_vault()
-            return Vault()
-        try:
-            return Vault.load(vault_file(), key)
-        except (VaultError, OSError):
-            _wipe_vault()
-            return Vault()
+        keys, keychain_readable = _session_keys()
+        for key in keys:
+            try:
+                return Vault.load(vault_file(), key)
+            except VaultError:
+                continue
+            except OSError:
+                break
+        else:
+            if not keychain_readable:
+                raise SessionError(KEYCHAIN_ERROR)
+        _wipe_vault()
+        return Vault()
 
 
 def save_session_vault(v: Vault) -> None:
@@ -271,6 +385,31 @@ def forget_session() -> bool:
             except mac.MacError:
                 pass
         return removed
+
+
+def purge_expired_session(lock_timeout: float = 0.0) -> bool:
+    """Delete an expired session: vault, metadata and key (file and Keychain).
+
+    Expiry used to be checked only when the next clip/text/restore loaded the vault, so a
+    session stayed on disk (and in backups) for as long as deid was not used again. Every
+    deid command, each folder-watch pass and `deid serve` call this. Never raises and never
+    waits for a busy session (another deid command holds it: try again next time). True if
+    something was deleted.
+    """
+    try:
+        if not (vault_file().exists() or meta_file().exists()) or not _expired():
+            return False
+        if not _THREAD_LOCK.acquire(blocking=False):
+            return False
+        try:
+            with _file_lock(timeout=lock_timeout):
+                if not (vault_file().exists() or meta_file().exists()) or not _expired():
+                    return False
+                return forget_session()
+        finally:
+            _THREAD_LOCK.release()
+    except (SessionError, OSError):
+        return False
 
 
 # ---------------------------------------------------------------------- locking
@@ -362,7 +501,8 @@ def count_tokens(text: str, vault: Vault) -> int:
 
 __all__ = (
     "load_session_vault", "save_session_vault", "forget_session", "open_session",
-    "data_dir", "config_dir", "user_dir", "vault_file", "key_file", "session_key",
-    "session_hours", "seed_detector", "known_values", "unknown_tokens", "count_tokens",
-    "SessionError",
+    "purge_expired_session", "data_dir", "config_dir", "user_dir", "vault_file", "key_file",
+    "session_key", "session_hours", "seed_detector", "known_values", "unknown_tokens",
+    "count_tokens", "make_private_dir", "prepare_work_dir", "loose_permissions",
+    "keychain_problem", "SessionError",
 )

@@ -81,6 +81,40 @@ def check_paths(src: Path, dst: Path) -> None:
         raise same_file_error()
 
 
+# Zip containers (.docx .hwpx .xlsx): limits on the unpacked size, checked before anything is
+# decompressed (a few MB of zeros can expand to gigabytes: a "zip bomb").
+ZIP_MAX_ENTRIES = 10_000
+ZIP_MAX_ENTRY = 256 * 1024 * 1024
+ZIP_MAX_TOTAL = 512 * 1024 * 1024
+ZIP_RATIO_CHECK = 32 * 1024 * 1024    # entries above this size must not compress > 200:1
+ZIP_MAX_RATIO = 200
+
+
+ZIP_TOO_BIG_ERROR = ("압축을 풀면 너무 큰 파일이라 처리하지 않았습니다 (손상되었거나 압축 폭탄일 수 있음). "
+                     "(the file expands to an unsafe size when unzipped - damaged or a zip bomb; "
+                     "refused)")
+
+
+def zip_size_problem(infos: list[Any]) -> str | None:
+    """Why a zip (its ZipInfo list) is too big to unpack safely, or None.
+
+    Uses the sizes recorded in the zip directory; Python's zipfile never returns more bytes
+    than the recorded size (a lying header fails its CRC check instead)."""
+    too_big = ZIP_TOO_BIG_ERROR
+    if len(infos) > ZIP_MAX_ENTRIES:
+        return too_big
+    total = 0
+    for info in infos:
+        size = int(getattr(info, "file_size", 0) or 0)
+        packed = int(getattr(info, "compress_size", 0) or 0)
+        total += size
+        if size > ZIP_MAX_ENTRY or total > ZIP_MAX_TOTAL:
+            return too_big
+        if size > ZIP_RATIO_CHECK and size > ZIP_MAX_RATIO * max(packed, 1):
+            return too_big
+    return None
+
+
 def write_atomic(dst: Path, payload: bytes | Callable[[Path], None]) -> None:
     """Write `payload` (bytes, or a function writing to a path) to dst via a temp file.
 
@@ -306,16 +340,112 @@ def _split_whitespace_ids(text: str, s: int, e: int) -> list[tuple[int, int]]:
     return [(s + a, s + b) for a, b in toks if _DIGIT.search(text[s + a:s + b])]
 
 
+# ---------------------------------------------------------------------------------------------
+# Value shapes (used to confirm what a header / label says)
+# ---------------------------------------------------------------------------------------------
+
+_ADDR_TOKEN = re.compile(r"[가-힣A-Za-z0-9]+")
+# "역삼동 123-4", "테헤란로 152", "중앙로12번길 3", "운암리 45번지" (a place word + a lot/building
+# number that is not followed by a unit: "운동 2회", "다리 3주" are not addresses).
+_ADDR_NUMBERED = re.compile(
+    r"[가-힣]{1,10}(?:동|읍|면|리|로|길)[ ]?\d{1,5}(?:-\d{1,5})?(?:번지|번길)?(?![0-9가-힣])"
+    r"|[가-힣]{1,6}\d{1,3}가(?![가-힣])"
+    r"|\d{1,4}[ ]?동[ ]?\d{1,5}[ ]?호")
+_ADDR_BUILDINGS = ("아파트", "빌라", "맨션", "오피스텔", "주공", "연립", "다세대", "기숙사")
+# Short 시/도 names that are also ordinary words ("경기" = a seizure in Korean pediatrics).
+_AMBIGUOUS_SIDO = frozenset({"경기"})
+# English addresses: street words, Korean city names, romanized -ro/-gil/-dong/-gu
+# ("ST elevation", "3 days" are not addresses).
+_EN_ADDRESS = re.compile(
+    r"\b(?:street|avenue|ave|road|blvd|boulevard|apt|suite"
+    r"|seoul|busan|incheon|daegu|daejeon|gwangju|ulsan|sejong|gyeonggi|gangwon|jeju|korea)\b"
+    r"|-(?:ro|gil|dong|gu|si|gun|eup|myeon)\b", re.I)
+_ADDRESS_HINTS: tuple[frozenset[str], frozenset[str], Any] | None = None
+
+
+def _address_hints() -> tuple[frozenset[str], frozenset[str], Any]:
+    """(시/도 names, 시/군/구 names, address recognizer finder or None)."""
+    global _ADDRESS_HINTS
+    if _ADDRESS_HINTS is None:
+        try:
+            from ..config import default_config
+            from ..recognizers.address import SIDO, SIGUNGU, AddressRecognizer
+            rec, cfg = AddressRecognizer(), default_config()
+            _ADDRESS_HINTS = (frozenset(SIDO) - _AMBIGUOUS_SIDO, frozenset(SIGUNGU),
+                              lambda s: rec.find(s, cfg))
+        except (ImportError, TypeError):  # pragma: no cover - address module always present
+            _ADDRESS_HINTS = (frozenset(), frozenset(), None)
+    return _ADDRESS_HINTS
+
+
+def looks_like_address(value: Any) -> bool:
+    """Does a value under an address header/label look like a postal address?
+
+    '주소' (主訴) is also the usual chart word for the chief complaint, so a value is only
+    typed ADDRESS when it has an address feature: a 시/도 or 시/군/구 name, a 동/로/길 +
+    number, an apartment unit (101동 1203호) or building word, a hit of the address
+    recognizer, or (English) a house number / street word. '두통', '우측 하복부 통증' are not.
+    """
+    if not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s or is_null_value(s):
+        return False
+    sido, sigungu, find = _address_hints()
+    for tok in _ADDR_TOKEN.findall(s):
+        if tok in sido or tok in sigungu or tok.endswith(_ADDR_BUILDINGS):
+            return True
+        if len(tok) > 3 and any(tok.startswith(x) for x in sido if len(x) >= 3):
+            return True     # "서울특별시강남구" written without spaces
+    if _ADDR_NUMBERED.search(s):
+        return True
+    if not any("가" <= ch <= "힣" for ch in s):
+        return bool(_EN_ADDRESS.search(s))
+    try:
+        return bool(find and find(s))
+    except Exception:  # noqa: BLE001 - best effort; the checks above decide
+        return False
+
+
+_PAREN_PART = re.compile(r"[(（\[][^)）\]]*[)）\]]")
+_EN_NAME = re.compile(r"[A-Z][A-Za-z'\-]+(?:,?[ ]+[A-Z][A-Za-z'\-]*\.?){1,2}")
+
+
+def name_shaped(value: Any) -> bool:
+    """A bare value that looks like a person's name on its own: a Hangul surname + 1-2
+    syllables that is not a common word ("최유나", "남궁 민수"), or 2-3 capitalized words
+    ("John Smith"). Used where a header alone ("이름", "Name") is not enough evidence."""
+    if not isinstance(value, str):
+        return False
+    t = _PAREN_PART.sub(" ", value).strip()            # "홍길동 (M/45)", "홍길동(모)"
+    t = t[:_strip_honorific(0, len(t), t)].strip()     # "홍길동 님", "김민준씨"
+    if _HANGUL_SPACED.fullmatch(t) and len(t.replace(" ", "")) <= 4:
+        t = "".join(t.split())                          # "홍 길동", "홍 길 동"
+    if re.fullmatch(r"[가-힣]{2,4}", t):
+        if t in _name_stopwords():
+            return False
+        try:
+            from ..recognizers.names import _name_lengths, _rejected
+        except ImportError:  # pragma: no cover
+            return False
+        return len(t) in _name_lengths(t) and not _rejected(t, t)
+    return bool(_EN_NAME.fullmatch(t))
+
+
 def typed_spans(entity: str, text: str) -> list[Span]:
     """Spans for a value that is known to be `entity` because of its column/key name.
 
     The whole stripped value is the span, except that lists ("홍길동, 김민준",
     "010-1234-5678 / 02-123-4567") are split, relation words ("(모)", "본인") and empty
-    markers ("-", "없음") are skipped, and honorifics are trimmed from names.
+    markers ("-", "없음") are skipped, and honorifics are trimmed from names. A value under
+    an address header that does not look like an address ('주소: 두통', the chief complaint)
+    is not typed.
     """
     if not text or is_null_value(text):
         return []
     ranges: list[tuple[int, int]] = []
+    if entity == E.ADDRESS and not looks_like_address(text):
+        return []
     if entity == E.PERSON:
         for s, e in _pieces(text, _PERSON_SPLIT):
             e = _strip_honorific(s, e, text)
@@ -405,6 +535,8 @@ class Batch:
             return
         if entity == E.PERSON and value in _name_stopwords():
             return
+        if entity == E.ADDRESS and not looks_like_address(value):
+            return      # '주소' (chief complaint) values must not spread through the file
         self.detector.add_known(entity, value)
         if entity == E.PERSON and _HANGUL_SPACED.fullmatch(value):
             self.detector.add_known(entity, "".join(value.split()))   # "김 민준" -> "김민준"
@@ -414,10 +546,20 @@ class Batch:
             if key:
                 self._birthdays.add(key)
 
-    def add(self, text: str, setter: Setter | None, entity: str | None = None) -> None:
+    def add(self, text: str, setter: Setter | None, entity: str | None = None, *,
+            typed: list[Span] | None = None) -> None:
+        """`typed`: spans of `text` already known to be PII (e.g. the cells of a typed column
+        in a table pasted as text); they are registered as known values and win over
+        overlapping detections, and the rest of `text` is still detected."""
         if not isinstance(text, str) or not text.strip():
             return
-        typed: list[Span] = []
+        if typed:
+            keep = [sp for sp in typed if self.detector.cfg.is_enabled(sp.entity)]
+            for sp in keep:
+                self.add_known(sp.entity, sp.text)
+            self.slots.append(_Slot(text, setter, sorted(keep, key=lambda x: x.start), True))
+            return
+        typed = []
         detect = True
         if entity and self.detector.cfg.is_enabled(entity):
             typed = typed_spans(entity, text)
@@ -478,25 +620,57 @@ def _covers(outer: Span, inner: Span) -> bool:
     return outer.start <= inner.start and inner.end <= outer.end
 
 
+class _SpanIndex:
+    """Spans sorted by start with a running maximum of their ends: the spans overlapping a
+    range are found without scanning the whole list (a pasted table has thousands)."""
+
+    def __init__(self, spans: list[Span]) -> None:
+        self.spans = sorted(spans, key=lambda x: (x.start, x.end))
+        self.starts = [sp.start for sp in self.spans]
+        self.max_end: list[int] = []
+        m = -1
+        for sp in self.spans:
+            m = max(m, sp.end)
+            self.max_end.append(m)
+
+    def overlapping(self, start: int, end: int) -> list[Span]:
+        """Spans with sp.start < end and sp.end > start (in start order)."""
+        import bisect
+        i = bisect.bisect_left(self.starts, end) - 1
+        out = []
+        while i >= 0 and self.max_end[i] > start:
+            sp = self.spans[i]
+            if sp.end > start:
+                out.append(sp)
+            i -= 1
+        out.reverse()
+        return out
+
+
 def merge_typed(typed: list[Span], detected: list[Span],
                 strength: Callable[[str], int] | None = None) -> list[Span]:
     """Typed spans win over overlapping detected spans, unless a detected span of another
     entity covers the whole typed span and its action hides more (all typed spans of one
     value share one entity, so a promoted span replaces every typed span inside it)."""
     chosen: list[Span] = []
+    seen: set[int] = set()
+    det = _SpanIndex(detected) if strength is not None and detected else None
+    typ = _SpanIndex(typed) if det is not None else None
     for t in typed:
         pick = t
-        if strength is not None:
-            for sp in detected:
+        if det is not None and typ is not None:
+            for sp in det.overlapping(t.start, t.end):
                 if (_covers(sp, t) and sp.entity != t.entity
                         and strength(sp.entity) > strength(t.entity)
-                        and all(_covers(sp, o) for o in typed if _overlaps(o, sp))):
+                        and all(_covers(sp, o) for o in typ.overlapping(sp.start, sp.end))):
                     pick = sp
                     break
-        if pick not in chosen:
+        if id(pick) not in seen:
+            seen.add(id(pick))
             chosen.append(pick)
+    taken = _SpanIndex(chosen)
     for sp in detected:
-        if sp not in chosen and not any(_overlaps(sp, o) for o in chosen):
+        if not taken.overlapping(sp.start, sp.end):
             chosen.append(sp)
     return sorted(chosen, key=lambda x: x.start)
 
@@ -562,15 +736,159 @@ def split_paragraphs(text: str, max_chars: int = CHUNK_CHARS) -> list[str]:
     return chunks
 
 
+# Tables pasted as text. Copying cells from Excel / Numbers / an EMR grid puts tab-separated
+# rows on the clipboard; CSV text may be pasted too. Their columns are typed exactly like a
+# .tsv/.csv file (formats.tabular: header row -> PERSON/RRN/PHONE ... for every cell below,
+# form rows "성명<TAB>홍길동", headerless "이름<TAB>성별<TAB>나이" rows), while the text itself is
+# still detected as a whole and never re-serialised (the layout stays byte-identical).
+
+Record = tuple[int, int, list[tuple[int, int]]]   # (start, end, [(cell start, cell end)])
+
+
+def _text_records(text: str, delim: str) -> list[Record]:
+    """Split `text` into records (lines) and cells. A cell that starts with a double quote
+    may contain line breaks and delimiters (Excel quotes such cells) when its closing quote is
+    followed by the delimiter or a line end; otherwise the quote is ordinary text."""
+    stop = re.compile("[" + re.escape(delim) + "\r\n]")
+    n = len(text)
+    out: list[Record] = []
+    pos = 0
+    while pos < n:
+        start = pos
+        cells: list[tuple[int, int]] = []
+        while True:
+            cs = pos
+            if pos < n and text[pos] == '"':
+                j = pos + 1
+                while j < n:
+                    if text[j] == '"':
+                        if j + 1 < n and text[j + 1] == '"':
+                            j += 2
+                            continue
+                        break
+                    j += 1
+                if j < n and (j + 1 == n or text[j + 1] in (delim, "\r", "\n")):
+                    cells.append((pos + 1, j))
+                    pos = j + 1
+                else:
+                    m = stop.search(text, pos)
+                    pos = m.start() if m else n
+                    cells.append((cs, pos))
+            else:
+                m = stop.search(text, pos)
+                pos = m.start() if m else n
+                cells.append((cs, pos))
+            if pos < n and text[pos] == delim:
+                pos += 1
+                continue
+            break
+        end = pos
+        if text.startswith("\r\n", pos):
+            pos += 2
+        elif pos < n and text[pos] in "\r\n":
+            pos += 1
+        out.append((start, end, cells))
+    return out
+
+
+def _runs(records: list[Record], same_count: bool) -> list[list[Record]]:
+    """Maximal runs of consecutive records with 2+ cells (and, for CSV, the same count)."""
+    runs: list[list[Record]] = []
+    cur: list[Record] = []
+    for rec in records:
+        ok = len(rec[2]) >= 2 and not (same_count and cur and len(cur[-1][2]) != len(rec[2]))
+        if ok:
+            cur.append(rec)
+            continue
+        if cur:
+            runs.append(cur)
+        cur = [rec] if len(rec[2]) >= 2 else []
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def table_spans(text: str, cfg: "Config | None" = None) -> list[Span]:
+    """Typed spans for the cells of tables inside plain text (tab-separated rows; comma-
+    separated rows only under a recognised header row). Offsets refer to `text`."""
+    if "\t" not in text and "," not in text:
+        return []
+    from .tabular import ColumnPolicy, SKIP, TEXT, build_layout, column_overrides, plausible
+    try:
+        policy = ColumnPolicy(column_overrides(cfg))
+    except ValueError:
+        policy = ColumnPolicy()
+    out: list[Span] = []
+    taken: set[int] = set()     # records already typed as part of a TSV table
+    for delim in ("\t", ","):
+        if delim not in text:
+            continue
+        records = _text_records(text, delim)
+        for run in _runs(records, same_count=delim == ","):
+            if delim == "," and (len(run) < 2 or any(r[0] in taken for r in run)):
+                continue
+            grid = {i: {j: text[s:e].strip() for j, (s, e) in enumerate(rec[2]) if text[s:e].strip()}
+                    for i, rec in enumerate(run)}
+            layout = build_layout(grid, policy)
+            if delim == "," and layout.header_row is None:
+                continue          # commas in prose: only a real header row makes a table
+            for i, rec in enumerate(run):
+                taken.add(rec[0])
+                for j, (s, e) in enumerate(rec[2]):
+                    kind = layout.kind(i, j)
+                    if kind in (None, SKIP, TEXT) or s >= e:
+                        continue
+                    if delim == "," and not _csv_cell_fits(kind, text[s:e], plausible):
+                        continue   # prose with commas under a header-like line: need value shape
+                    for sp in typed_spans(kind, text[s:e]):
+                        out.append(Span(s + sp.start, s + sp.end, sp.entity, sp.text, sp.score,
+                                        sp.source))
+    out.sort(key=lambda x: (x.start, x.end))
+    merged: list[Span] = []
+    for sp in out:   # a cell typed by both delimiters: keep the first (TSV) span
+        if merged and sp.start < merged[-1].end:
+            continue
+        merged.append(sp)
+    return merged
+
+
+def _csv_cell_fits(kind: str, cell: str, plausible: Callable[[str, Any], bool]) -> bool:
+    """A cell of a comma-separated table found in plain text is typed only when its value
+    looks like that kind of value: commas are common in prose, and a sentence line under
+    "이름, 나이, 성별 확인함" must not be erased as a name. (TSV rows copied from a
+    spreadsheet keep the header-only rule, like a .tsv file.)"""
+    v = cell.strip().strip('"').strip()
+    if not v:
+        return False
+    if kind == E.PERSON:
+        parts = [p for p in re.split(r"\s*[/;·]\s*|\s*,\s*", v) if p]
+        return bool(parts) and all(name_shaped(p) for p in parts)
+    return plausible(kind, v)
+
+
 def _text_slots(text: str, batch: Batch) -> list[str]:
     chunks = split_paragraphs(text)
     out = list(chunks)
+    typed = table_spans(text, batch.detector.cfg)
 
     def setter(i: int) -> Setter:
         return lambda res: out.__setitem__(i, res.text)
 
+    pos = k = 0
     for i, c in enumerate(chunks):
-        batch.add(c, setter(i))
+        end = pos + len(c)
+        mine = []
+        while k < len(typed) and typed[k].end <= pos:
+            k += 1
+        j = k
+        while j < len(typed) and typed[j].start < end:   # spans are sorted, non-overlapping
+            sp = typed[j]
+            s, e = max(sp.start, pos), min(sp.end, end)
+            if s < e:
+                mine.append(Span(s - pos, e - pos, sp.entity, text[s:e], sp.score, sp.source))
+            j += 1
+        batch.add(c, setter(i), typed=mine)
+        pos = end
     return out
 
 
@@ -1177,4 +1495,5 @@ __all__ = (
     "EXTENSIONS", "TextEncoding", "TextEncodingError", "detect_encoding", "read_text",
     "encode_text", "write_atomic", "check_paths", "Batch", "typed_spans", "numeric_text",
     "split_paragraphs", "deid_text", "deid_document", "field_entities", "process",
+    "looks_like_address", "name_shaped", "table_spans", "zip_size_problem",
 )

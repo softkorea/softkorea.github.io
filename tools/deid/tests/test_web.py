@@ -301,3 +301,52 @@ def test_make_server_tries_next_port(tmp_path, monkeypatch):
             web.make_server(first.port, default_config(), tries=1)
     finally:
         first.server_close()
+
+
+# ---------------------------------------------------------------------- regression: ux fixes
+
+
+def test_security_session_never_expires_on_disk_serve(tmp_path, monkeypatch):
+    """`deid serve` deletes an expired session at start and periodically while it runs."""
+    import time
+
+    from deid import session
+    from deid.vault import Vault
+
+    monkeypatch.setenv("DEID_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("DEID_SESSION_HOURS", raising=False)
+
+    def expired_session():
+        v = Vault()
+        v.token_for("PERSON", "김민서", "이름")
+        session.save_session_vault(v)
+        session.meta_file().write_text(json.dumps({"created": time.time() - 13 * 3600}))
+
+    expired_session()
+    srv = web.make_server(0, default_config())
+    try:
+        assert not session.vault_file().exists() and not session.key_file().exists()
+        expired_session()
+        srv.service_actions()                 # within PURGE_INTERVAL: not yet
+        assert session.vault_file().exists()
+        srv._last_purge -= web.PURGE_INTERVAL
+        srv.service_actions()
+        assert not session.vault_file().exists() and not session.key_file().exists()
+    finally:
+        srv.server_close()
+    expired_session()                         # a custom session factory is never purged
+    srv = web.make_server(0, default_config(), session=session.open_session)
+    try:
+        srv._last_purge = float("-inf")
+        srv.service_actions()
+        assert session.vault_file().exists()
+    finally:
+        srv.server_close()
+
+
+def test_security_filename_raw_names_web_upload(server):
+    status, headers, body = request(server, "POST", "/api/file", "특이 소견 없음".encode(),
+                                    {"X-Filename": quote("김민서_외래기록.txt")})
+    assert status == 200
+    out_name = unquote(headers["X-Deid-Filename"])
+    assert out_name == "[이름1]_외래기록.deid.txt" and "김민서" not in unquote(headers["X-Deid-Report"])

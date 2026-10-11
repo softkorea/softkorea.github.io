@@ -19,8 +19,7 @@ def deidentify(text: str, cfg: Config | None = None, vault: Vault | None = None,
     if cfg is None:
         cfg = detector.cfg if detector is not None else default_config()
     det = detector if detector is not None else Detector(cfg)
-    result = Anonymizer(cfg, vault).anonymize(text, det.detect(text))
-    report = Report()
-    for r in result.replacements:
-        report.add(r.entity)
-    return result.text, report
+    # Same pipeline as `deid text` / `deid clip`: tables pasted as text (TSV rows copied from
+    # Excel, CSV under a header row) are typed by column header before detection.
+    from .formats.text import deid_text
+    return deid_text(text, det, Anonymizer(cfg, vault))

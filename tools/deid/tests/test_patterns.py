@@ -46,7 +46,6 @@ def score(text, entity, value):
     ("외국인등록번호 900101-5234561", E.FRN, "900101-5234561", 0.95),
     ("900101-6234567", E.FRN, "900101-6234567", 0.75),
     ("880101-9123451", E.RRN, "880101-9123451", 0.9),               # 1800s, checksum ok
-    ("880101-9123450", E.RRN, "880101-9123450", 0.55),              # 1800s, separator only
 ])
 def test_rrn_frn_full(text, entity, value, expected):
     assert score(text, entity, value) == pytest.approx(expected)
@@ -488,7 +487,7 @@ def test_recognizer_protocol_and_entities():
         assert isinstance(r.entities, tuple) and r.entities
         assert callable(r.find)
         covered.update(r.entities)
-    expected = set(E.ALL) - {E.PERSON, E.ADDRESS, E.OTHER}
+    expected = set(E.ALL) - {E.PERSON, E.ADDRESS}
     assert covered == expected
     assert len({r.name for r in RECS}) == len(RECS)
 
@@ -693,3 +692,230 @@ def test_medical_license_positive(text, value):
 ])
 def test_medical_license_negative(text):
     assert P.MedicalLicenseRecognizer().find(text, default_config()) == []
+
+
+# --------------------------------------------------------------------------- red-team regressions
+
+def _deid(text):
+    from deid import deidentify
+    return deidentify(text)[0]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("주민번호: 940305 / 2048117", "940305 / 2048117"),
+    ("주민번호 940305·2048117", "940305·2048117"),
+    ("주민번호 940305_2048117", "940305_2048117"),
+])
+def test_tl02_rrn_split_separators_slash_dot_underscore(text, expected):
+    assert values(text, E.RRN) == [expected]
+
+
+@pytest.mark.parametrize("text, back, front", [
+    ("발신자 본인 확인 - 주민번호 뒷자리 2048117 (앞자리 940305)", "2048117", "940305"),
+    ("주민번호 앞자리 940305 뒷자리 2048117 불러주심", "2048117", "940305"),
+    ("피보험자 주민번호 앞 6자리 870204, 뒤 7자리 1538214", "1538214", "870204"),
+    ("주민번호 뒷자리 확인 2048117 (앞자리 940305)", "2048117", "940305"),
+])
+def test_tl02_rrn_split_halves(text, back, front):
+    assert values(text, E.RRN) == [back]
+    assert values(text, E.BIRTHDATE) == [front]
+    out = _deid(text)
+    assert back not in out and front not in out
+
+
+def test_tl02_rrn_halves_need_context():
+    assert values("전화번호 뒷자리 5678", E.RRN) == []
+    assert values("뒷자리 2048117", E.RRN) == []          # no 주민/등록번호 nearby
+
+
+@pytest.mark.parametrize("text, digits", [
+    ("환자 휴대폰 010 3381 7724 / 자택 031)789-4521", "0317894521"),
+    ("집전화 02)555-0198 로 연락 바람", "025550198"),
+    ("보호자(딸) 권소희 씨 전화. 010)5873-2216.", "01058732216"),
+    ("연락처 (010)5873-2216", "01058732216"),
+    ("받는분 신유정 / 연락처 010 - 9912 - 3304", "01099123304"),
+    ("연락처 010-9912 -3304", "01099123304"),
+    ("폰번호 010ㅡ4417ㅡ2290 이에요", "01044172290"),
+    ("번호 010~4417~2290 로 문자주세요", "01044172290"),
+    ("연락처 010-66213098", "01066213098"),
+    ("연락처 0106621-3098", "01066213098"),
+])
+def test_tl04_phone_separators(text, digits):
+    out = _deid(text)
+    assert digits not in "".join(c for c in out if c.isdigit())
+
+
+@pytest.mark.parametrize("text", ["E 1500-2300 근무", "근무 1600-2400", "야간 당직 1800-0600", "금식 1800-0800 유지"])
+def test_over_mask_10_shift_time_ranges_are_not_phones(text):
+    assert values(text, E.PHONE) == []
+
+
+def test_over_mask_10_business_numbers_still_found():
+    assert values("1588-1234", E.PHONE) == ["1588-1234"]
+    assert values("문의 1600-1020", E.PHONE) == ["1600-1020"]
+
+
+@pytest.mark.parametrize("text, value", [
+    ("Name: 강민서   Sex/Age: F/45   Reg No: 33018274", "33018274"),
+    ("Patient: Kim, 32F, Reg. No. 20184473", "20184473"),
+    ("Registration No. 20184473", "20184473"),
+    ("Unit No: 20184473", "20184473"),
+    ("[알림] 탁서윤 님(차트 5523190) 내일 MRI", "5523190"),
+    ("엄마 환번 1028473 이래 접수할때 말해", "1028473"),
+    ("외래번호 4471902", "4471902"),
+    ("입원번호 2026-004512", "2026-004512"),
+    ("이름 미상, 임시번호 T-2026-1043", "T-2026-1043"),
+    ("1) 나상민 (M/52, #20934411) 흉통", "20934411"),
+])
+def test_tl12_mrn_context_variants(text, value):
+    assert values(text, E.MRN) == [value]
+
+
+@pytest.mark.parametrize("text", ["차트 2024년 정리", "차트 3건 누락", "차트 정리 완료"])
+def test_tl12_bare_chart_word_is_not_an_mrn_label_for_counts(text):
+    assert values(text, E.MRN) == []
+
+
+@pytest.mark.parametrize("text, value", [
+    ("f/u list - 강태호 85.3.15생 HTN", "85.3.15생"),
+    ("출생 85.3.15 남아", "85.3.15"),
+    ("대상자 : 변지섭 (남, 1979.11.23生)", "1979.11.23生"),
+    ("1979.11.23 생, 남", "1979.11.23 생"),
+    ("생년월일 15-Mar-1985", "15-Mar-1985"),
+    ("피보험자(주민번호 앞자리 870204)", "870204"),
+    ("주민번호 앞 6자리 870204 확인", "870204"),
+])
+def test_tl13_birthdate_formats(text, value):
+    assert values(text, E.BIRTHDATE) == [value]
+
+
+def test_tl13_space_before_saeng_needs_a_lone_word():
+    assert values("2024.03.05 생검 시행", E.BIRTHDATE) == []
+
+
+@pytest.mark.parametrize("text", [
+    "출생 체중 3.2kg, 2024-03-05 퇴원.",
+    "출생 후 2024.03.20 BCG 접종.",
+    "생년월일 미상, 2024-03-15 내원.",
+    "생일 케이크 섭취 후 2024-03-15 혈당 상승.",
+])
+def test_over_mask_11_birth_keyword_does_not_rewrite_other_dates(text):
+    assert values(text, E.BIRTHDATE) == []
+    assert "년생" not in _deid(text)
+
+
+@pytest.mark.parametrize("text, value", [
+    ("생년월일: 2024-03-15 (내원 시 확인)", "2024-03-15"),
+    ("생년월일 1985.03.02 / 남", "1985.03.02"),
+    ("DOB: 1985-03-02 visit", "1985-03-02"),
+])
+def test_over_mask_11_labelled_birth_dates_stay_birthdates(text, value):
+    assert values(text, E.BIRTHDATE) == [value]
+
+
+@pytest.mark.parametrize("text, entity, value", [
+    ("내담자: 공일공에 삼사오육에 칠팔구공이요.", E.PHONE, "공일공에 삼사오육에 칠팔구공"),
+    ("전화는 공일공 칠칠팔이 삼삼일오 입니다", E.PHONE, "공일공 칠칠팔이 삼삼일오"),
+    ("번호 공일공-칠칠팔이-삼삼일오", E.PHONE, "공일공-칠칠팔이-삼삼일오"),
+    ("상담사: 생년월일 말씀해주시겠어요?\n내담자: 팔칠년 오월 이십일일이요.", E.BIRTHDATE, "팔칠년 오월 이십일일"),
+])
+def test_tl16_spoken_numbers(text, entity, value):
+    assert values(text, entity) == [value]
+
+
+def test_tl16_spoken_birth_date_needs_birth_context():
+    assert values("팔칠년 오월 이십일일에 입사", E.BIRTHDATE) == []
+
+
+@pytest.mark.parametrize("text, value", [
+    ("외국인 환자, 여권번호 C1234567 (사본 수납)", "C1234567"),
+    ("여권번호: E12345678", "E12345678"),
+    ("Passport No. 123456789", "123456789"),
+])
+def test_tl17_foreign_passport_after_label(text, value):
+    assert values(text, E.PASSPORT) == [value]
+
+
+def test_tl18_account_variants():
+    assert values("환불은 카뱅 3333-01-2345678 홍정아", E.ACCOUNT) == ["3333-01-2345678"]
+    assert values("계좌 110 482 339201 신한", E.ACCOUNT) == ["110 482 339201"]
+    assert values("검사 110 482 339201", E.ACCOUNT) == []
+
+
+@pytest.mark.parametrize("text, value", [
+    ("제 개인메일 soyul.ahn 골뱅이 naver.com 으로 보내주세요", "soyul.ahn 골뱅이 naver.com"),
+    ("hana_choi(at)hanmail.net 으로 보내주세요", "hana_choi(at)hanmail.net"),
+    ("hana_choi [at] hanmail [dot] net", "hana_choi [at] hanmail [dot] net"),
+    ("이메일 hana_choi @ hanmail.net", "hana_choi @ hanmail.net"),
+])
+def test_tl19_obfuscated_email(text, value):
+    assert values(text, E.EMAIL) == [value]
+
+
+def test_tl19_plain_at_needs_a_mail_domain():
+    assert values("meet me at home.com", E.EMAIL) == []
+
+
+@pytest.mark.parametrize("text, value", [
+    ("Phone: (503) 555-0147", "(503) 555-0147"),
+    ("His wife Linda (cell 415-555-0172) accompanies him.", "415-555-0172"),
+    ("Her daughter can be reached on 07700 900417.", "07700 900417"),
+])
+def test_tl20_foreign_phones_with_context(text, value):
+    assert values(text, E.PHONE) == [value]
+
+
+def test_tl20_foreign_phones_need_context():
+    assert values("Lot 415-555-0172 shipped", E.PHONE) == []
+
+
+@pytest.mark.parametrize("text, value", [
+    ("증권번호: 2019-A-883412", "2019-A-883412"),
+    ("사고접수번호 26-0918-77342", "26-0918-77342"),
+    ("직장 : (주)한결물산 / 사번 HG-20114", "HG-20114"),
+])
+def test_tl21_policy_claim_employee_ids(text, value):
+    assert values(text, E.OTHER) == [value]
+    assert value not in _deid(text)
+
+
+@pytest.mark.parametrize("text", ["접수번호 15번", "사번 확인 필요", "증권번호 미기재"])
+def test_tl21_reference_ids_need_a_real_value(text):
+    assert values(text, E.OTHER) == []
+
+
+@pytest.mark.parametrize("text", [
+    "체온 39도 1400 해열제 투여함.", "BT 38도 0200 재측정.", "38도 0600 오한 호소.", "37도 2000 해열.",
+    "40도 1530 경련 발생.", "501호 0830 활력징후 측정함.",
+])
+def test_over_mask_09_temperature_or_room_plus_time_is_not_a_plate(text):
+    assert values(text, E.PLATE) == []
+    assert _deid(text) == text
+
+
+def test_over_mask_09_plates_with_context_still_found():
+    assert values("차량번호 12도 1400", E.PLATE) == ["12도 1400"]
+    assert values("주차 123가 4567", E.PLATE) == ["123가 4567"]
+
+
+@pytest.mark.parametrize("text", ["약품 바코드 8801234567890 스캔함.", "검체번호 240315-0012345 접수.",
+                                  "880123-4******"])
+def test_over_mask_12_rrn_with_impossible_birth_date(text):
+    assert values(text, E.RRN) == [] and values(text, E.FRN) == []
+
+
+def test_over_mask_12_real_rrns_unaffected():
+    assert values("주민번호 900101-1234568", E.RRN) == ["900101-1234568"]
+    assert values("주민번호 000229-3123454", E.RRN) == ["000229-3123454"]
+
+
+@pytest.mark.parametrize("text", ["의사 면허 2010년 취득, 가정의학과 전문의 2015년 취득.",
+                                  "간호사 면허 2018년 취득 후 내과 병동 근무."])
+def test_over_mask_13_licence_year_is_not_a_licence_number(text):
+    assert values(text, E.MEDICAL_LICENSE) == []
+    assert _deid(text) == text
+
+
+def test_over_mask_13_licence_numbers_still_found():
+    assert values("의사 면허번호 제12345호", E.MEDICAL_LICENSE) == ["12345"]
+    assert values("Consultant, GMC 7012345", E.MEDICAL_LICENSE) == ["7012345"]

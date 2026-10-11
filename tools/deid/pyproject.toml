@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68"]
+# >=77: SPDX `license = "MIT"` (the TOML-table form stops building after 2027-02-18)
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,18 +9,25 @@ version = "0.1.0"
 description = "Korean-first local de-identification toolkit: text, Excel, CSV, PDF, DOCX, HWPX, images, screenshots, clipboard"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
   "openpyxl>=3.1",
   "pillow>=10",
   "pymupdf>=1.24",
   "python-docx>=1.1",
   "cryptography>=42",
-  "pytesseract>=0.3.10",
+  "tomli>=2; python_version < '3.11'",
+  # macOS: Apple Vision OCR and iPhone HEIC photos work out of the box (arm64/x86_64 wheels).
   "ocrmac>=1.0; sys_platform == 'darwin'",
+  "pillow-heif>=0.16; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
+# deid runs the tesseract binary itself; pytesseract is only consulted for a custom
+# `pytesseract.tesseract_cmd` when it happens to be installed.
+heic = ["pillow-heif>=0.16"]
+# Optional exact barcode/QR decoding in images (a pure-PIL detector is always used).
+barcodes = ["zxing-cpp>=2"]
 ner = ["transformers>=4.40", "torch>=2.2"]
 gliner = ["gliner>=0.2"]
 dev = ["pytest>=8", "presidio-analyzer>=2.2"]

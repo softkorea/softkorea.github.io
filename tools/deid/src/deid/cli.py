@@ -417,12 +417,14 @@ def cmd_text(args: argparse.Namespace) -> int:
         from .session import count_tokens, unknown_tokens
 
         with _vault_scope(args.vault, save=False, create=False) as vault:
-            n = count_tokens(text, vault)
+            in_links = vault.tokens_in_links(text)
+            n = count_tokens(text, vault) - in_links
             unknown = unknown_tokens(text, vault, cfg)
-            out = vault.restore(text)
+            out = vault.restore(text, links=False)
         _write_stdout(out)
         if not args.quiet:
-            _err(f"복원 (restored): {n}개" + (f", 복원 못 한 토큰 {unknown}개" if unknown else ""))
+            _err(f"복원 (restored): {n}개" + (f", 복원 못 한 토큰 {unknown}개" if unknown else "")
+                 + (f", {_links_note(in_links)}" if in_links else ""))
         return EXIT_OK
     from .anonymizer import Anonymizer
     from .formats.text import deid_text
@@ -437,23 +439,29 @@ def cmd_text(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _links_note(k: int) -> str:
+    return (f"링크(URL) 안의 가명 {k}개는 복원하지 않음 - 링크를 통해 원래 값이 밖으로 나가지 않도록 "
+            f"({k} token(s) inside links left as they are)")
+
+
+def _clip_failed(notify: bool, detail: str, note: str = "처리하지 못해 클립보드를 비웠습니다") -> int:
+    """Empty the clipboard so the original cannot be pasted by mistake, and say so."""
+    mac.clear_clipboard()
+    _err(f"비식별화 실패 - 실수로 붙여넣지 않도록 클립보드를 비웠습니다 (failed; clipboard cleared): "
+         f"{detail}")
+    _notify(notify, "deid 실패", note)
+    return EXIT_FAIL
+
+
 def _clip_image(cfg: "Config", notify: bool) -> int:
     from .anonymizer import Anonymizer
 
     with tempfile.TemporaryDirectory(prefix="deid-clip-") as td:
         src, dst = Path(td) / "clipboard.png", Path(td) / "clipboard.deid.png"
         if not mac.get_clipboard_image(src):
-            _err("클립보드 이미지를 읽을 수 없습니다 (cannot read the clipboard image)")
-            return EXIT_FAIL
-        try:
-            report = formats.process_file(src, dst, _session_detector(cfg), Anonymizer(cfg), cfg)
-            mac.set_clipboard_image(dst)
-        except Exception as e:  # noqa: BLE001
-            mac.clear_clipboard()
-            _err(f"이미지 비식별화 실패 - 실수로 붙여넣지 않도록 클립보드를 비웠습니다 "
-                 f"(image failed; clipboard cleared): {_first_line(e)}")
-            _notify(notify, "deid 실패", "이미지를 처리하지 못해 클립보드를 비웠습니다")
-            return EXIT_FAIL
+            raise CliError("클립보드 이미지를 읽을 수 없습니다 (cannot read the clipboard image)")
+        report = formats.process_file(src, dst, _session_detector(cfg), Anonymizer(cfg), cfg)
+        mac.set_clipboard_image(dst)
     summary = _summary(report, cfg)
     _err(f"이미지 가림 완료 (image redacted): {summary}")
     for w in report.warnings:
@@ -462,40 +470,65 @@ def _clip_image(cfg: "Config", notify: bool) -> int:
     return EXIT_OK
 
 
-def cmd_clip(args: argparse.Namespace) -> int:
-    mac.require_macos("deid clip")
-    cfg = _load_cfg(args.config)
+def _clip(cfg: "Config", notify: bool) -> int:
     info = mac.clipboard_info()
     if mac.info_has_files(info):
-        _err("클립보드에 파일이 복사되어 있습니다. 파일은 'deid file' 또는 Finder 빠른 동작을 사용하세요 "
-             "(the clipboard holds files: use 'deid file')")
+        # A copied Finder file would be pasted (uploaded) as the original: clear it too.
+        mac.clear_clipboard()
+        _err("클립보드에 복사된 파일은 비식별화할 수 없어 실수로 원본을 붙여넣지 않도록 클립보드를 "
+             "비웠습니다. 파일은 'deid file' 또는 Finder 빠른 동작을 사용하세요 "
+             "(the clipboard held files: cleared; use 'deid file')")
+        _notify(notify, "deid", "복사한 파일은 처리할 수 없어 클립보드를 비웠습니다 - 빠른 동작을 쓰세요")
         return EXIT_NOTHING
     text = mac.paste_text()
     if not text.strip():
         if mac.info_has_image(info):
-            return _clip_image(cfg, args.notify)
+            return _clip_image(cfg, notify)
+        if not text and info.strip():
+            # Neither text nor an image (e.g. PDF data): we cannot check it, so it must go.
+            mac.clear_clipboard()
+            _err("클립보드 내용을 읽을 수 없는 형식이라 실수로 붙여넣지 않도록 비웠습니다 "
+                 "(unsupported clipboard content: cleared)")
+            _notify(notify, "deid", "처리할 수 없는 형식이라 클립보드를 비웠습니다")
+            return EXIT_NOTHING
         _err("클립보드가 비어 있습니다 (clipboard is empty)")
-        _notify(args.notify, "deid", "클립보드가 비어 있습니다")
+        _notify(notify, "deid", "클립보드가 비어 있습니다")
         return EXIT_NOTHING
     from .anonymizer import Anonymizer
     from .formats.text import deid_text
 
-    try:
-        with _vault_scope(None) as vault:
-            out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
-        mac.copy_text(out)
-    except Exception as e:  # noqa: BLE001 - never leave the original in place silently
-        mac.clear_clipboard()
-        _err(f"비식별화 실패 - 실수로 붙여넣지 않도록 클립보드를 비웠습니다 "
-             f"(failed; clipboard cleared): {_first_line(e)}")
-        _notify(args.notify, "deid 실패", "처리하지 못해 클립보드를 비웠습니다")
-        return EXIT_FAIL
+    with _vault_scope(None) as vault:
+        out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
+    mac.copy_text(out)
     summary = _summary(report, cfg)
     _err(f"비식별화 완료, 클립보드에 복사함 (de-identified, copied): {summary}")
     for w in report.warnings:
         _err(f"   ! {w}")
-    _notify(args.notify, "deid 비식별화 완료", f"{summary} - 붙여넣기 전에 확인하세요")
+    _notify(notify, "deid 비식별화 완료", f"{summary} - 붙여넣기 전에 확인하세요")
     return EXIT_OK
+
+
+def cmd_clip(args: argparse.Namespace) -> int:
+    """Every failure - config error, unreadable clipboard, OCR, Keychain - empties the
+    clipboard: with a keyboard shortcut the next Cmd+V would otherwise paste the original."""
+    mac.require_macos("deid clip")
+    try:
+        cfg = _load_cfg(args.config)
+    except CliError as e:   # the notification never quotes the config file (it holds names)
+        return _clip_failed(args.notify, e.message,
+                            "설정 파일 오류로 처리하지 못해 클립보드를 비웠습니다 - deid doctor로 확인하세요")
+    try:
+        return _clip(cfg, args.notify)
+    except KeyboardInterrupt:
+        mac.clear_clipboard()
+        raise
+    except Exception as e:  # noqa: BLE001 - never leave the original in place silently
+        detail = e.message if isinstance(e, CliError) else _first_line(e)
+        keychain = "키체인" in detail
+        return _clip_failed(args.notify, detail,
+                            "키체인이 잠겨 있어 처리하지 못했습니다. 잠금을 풀고 다시 시도하세요 "
+                            "(클립보드를 비웠습니다)" if keychain else
+                            "처리하지 못해 클립보드를 비웠습니다")
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
@@ -515,12 +548,14 @@ def cmd_restore(args: argparse.Namespace) -> int:
                  "(no session tokens: expired or forgotten)")
             _notify(args.notify, "deid 복원", "복원할 세션 정보가 없습니다")
             return EXIT_NOTHING
-        n = count_tokens(text, vault)
+        in_links = vault.tokens_in_links(text)
+        n = count_tokens(text, vault) - in_links
         unknown = unknown_tokens(text, vault, cfg)
-        out = vault.restore(text)
+        out = vault.restore(text, links=False)
     if n:
         mac.copy_text(out)
-    msg = f"복원 {n}개" + (f", 복원 못 한 토큰 {unknown}개 (다른 세션/파일의 토큰)" if unknown else "")
+    msg = (f"복원 {n}개" + (f", 복원 못 한 토큰 {unknown}개 (다른 세션/파일의 토큰)" if unknown else "")
+           + (f", {_links_note(in_links)}" if in_links else ""))
     if n:
         _err(f"{msg} - 클립보드에 복사함 (restored, copied)")
     else:
@@ -541,26 +576,53 @@ def _unique_file(path: Path) -> Path:
         n += 1
 
 
+def _shot_from_clipboard(before: "tuple[int | None, str] | None", raw: Path) -> bool | None:
+    """After a capture that saved no file: None if it was cancelled; True when the screenshot
+    went to the clipboard instead (Control held while selecting) and was read into `raw`;
+    False when it went there but could not be read."""
+    if before is None:
+        return None
+    after = mac.clipboard_state()
+    if not (mac.clipboard_changed(before, after) and mac.info_has_image(after[1])):
+        return None
+    return mac.get_clipboard_image(raw)
+
+
 def cmd_shot(args: argparse.Namespace) -> int:
     from .anonymizer import Anonymizer
-    from .session import user_dir
+    from .session import prepare_work_dir, user_dir
 
     mac.require_macos("deid shot")
     cfg = _load_cfg(args.config)
     mode = "window" if args.window else "full" if args.full else "selection"
     outdir = Path(args.outdir or os.environ.get("DEID_SHOT_DIR") or user_dir() / "out")
     outdir = outdir.expanduser()
+    # Holding Control during an interactive capture makes screencapture put the RAW image
+    # on the clipboard and save no file; remember the clipboard to notice that.
+    before = mac.clipboard_state() if mode != "full" else None
     with tempfile.TemporaryDirectory(prefix="deid-shot-") as td:
         raw = Path(td) / "shot.png"
+        from_clipboard = False
         if not mac.screencapture(raw, mode):
-            return EXIT_NOTHING   # cancelled (Esc): quietly
-        outdir.mkdir(parents=True, exist_ok=True)
-        dst = _unique_file(outdir / f"shot-{datetime.now():%Y%m%d-%H%M%S}.png")
+            got = _shot_from_clipboard(before, raw)
+            if got is None:
+                return EXIT_NOTHING   # cancelled (Esc): quietly
+            from_clipboard = True
+            if not got:
+                mac.clear_clipboard()
+                _err("캡처가 클립보드로 들어갔지만 읽을 수 없어 클립보드를 비웠습니다 (Control 키를 누른 채 "
+                     "선택하면 원본이 클립보드로 갑니다) (capture went to the clipboard: cleared)")
+                _notify(args.notify, "deid 실패", "캡처를 처리하지 못해 클립보드를 비웠습니다")
+                return EXIT_FAIL
         try:
+            prepare_work_dir(outdir)
+            dst = _unique_file(outdir / f"shot-{datetime.now():%Y%m%d-%H%M%S}.png")
             report = formats.process_file(raw, dst, _session_detector(cfg), Anonymizer(cfg), cfg)
         except Exception as e:  # noqa: BLE001
+            if from_clipboard:
+                mac.clear_clipboard()
             _err(f"스크린샷 비식별화 실패, 저장하지 않았습니다 (screenshot failed, not saved): "
-                 f"{_first_line(e)}")
+                 f"{_first_line(e)}" + (" - 클립보드를 비웠습니다" if from_clipboard else ""))
             _notify(args.notify, "deid 실패", "스크린샷을 처리하지 못했습니다")
             return EXIT_FAIL
     summary = _summary(report, cfg)
@@ -571,6 +633,11 @@ def cmd_shot(args: argparse.Namespace) -> int:
             copied = True
         except mac.MacError as e:
             _err(f"   ! {e}")
+    if from_clipboard and not copied:
+        mac.clear_clipboard()   # the raw capture must not stay there
+    if from_clipboard:
+        _err("   ! Control 키를 누른 채 선택해 캡처가 클립보드로 갔습니다. 원본 대신 가린 이미지로 "
+             "바꿨습니다 (capture went to the clipboard; replaced with the redacted image)")
     _out(f"OK {dst} ({summary})" + (" - 클립보드에 복사함" if copied else ""))
     for w in report.warnings:
         _err(f"   ! {w}")
@@ -607,7 +674,7 @@ def _deid_command() -> str | list[str]:
 
 
 def cmd_install_watch(args: argparse.Namespace) -> int:
-    from .session import user_dir
+    from .session import prepare_work_dir, user_dir
 
     in_dir = Path(args.in_dir or user_dir() / "in").expanduser().absolute()
     out_dir = Path(args.out_dir or user_dir() / "out").expanduser().absolute()
@@ -621,8 +688,8 @@ def cmd_install_watch(args: argparse.Namespace) -> int:
              "설치된 자동 감시가 없습니다 (no watch agent installed)")
         return EXIT_OK
     mac.require_macos("deid install-watch")
-    in_dir.mkdir(parents=True, exist_ok=True)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    prepare_work_dir(in_dir)    # owner-only (0700): other accounts must not read originals
+    prepare_work_dir(out_dir)
     path = mac.install_watch_agent(plist)
     _out(f"자동 감시를 설치했습니다 (installed): {path}")
     _out(f"  넣는 곳 (in):  {in_dir}")
@@ -691,8 +758,13 @@ def _zip_paragraphs(path: Path, part_rx: str, para: str, text_tags: tuple[str, .
     def local(tag: object) -> str:
         return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
+    from .formats.text import zip_size_problem
+
     texts = []
     with zipfile.ZipFile(path) as z:
+        problem = zip_size_problem(z.infolist())    # zip bomb: refuse before unpacking
+        if problem:
+            raise CliError(problem)
         for n in sorted(z.namelist()):
             if not re.fullmatch(part_rx, n):
                 continue
@@ -776,6 +848,20 @@ def _config_path() -> Path:
     return Path(env).expanduser() if env else Path("~/.config/deid/config.toml").expanduser()
 
 
+def install_hint(*packages: str) -> str:
+    """A command that installs `packages` into the environment deid runs from.
+
+    A bare `pip install` cannot reach a pipx venv (the README's install path), and Homebrew
+    Python refuses it (PEP 668 externally-managed), so name pipx or this interpreter.
+    """
+    import shlex
+
+    prefix = Path(sys.prefix)
+    if prefix.parent.name == "venvs" and prefix.parent.parent.name.lower().endswith("pipx"):
+        return f"pipx inject {prefix.name} " + " ".join(packages)
+    return f"{shlex.quote(sys.executable)} -m pip install " + " ".join(map(shlex.quote, packages))
+
+
 class _Doctor:
     MARKS = {"ok": "[OK]", "warn": "[!!]", "fail": "[XX]", "info": "[--]"}
 
@@ -835,9 +921,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                  "" if "kor" in langs else "brew install tesseract-lang")
     has_ocrmac = importlib.util.find_spec("ocrmac") is not None
     if mac.is_macos():
-        doc.item("ok" if has_ocrmac else "warn", "Apple Vision OCR (ocrmac)",
-                 "사용 가능" if has_ocrmac else "설치되지 않음",
-                 "" if has_ocrmac else "pip install ocrmac  (한국어 인식이 더 정확합니다)")
+        vision = status.get("vision", "")
+        if has_ocrmac and vision.startswith("incomplete"):
+            # ocrmac is there, but Vision reads Korean only from macOS 13 on
+            doc.item("warn", "Apple Vision OCR (ocrmac)", vision.split(":", 1)[-1].strip(),
+                     "macOS를 13(Ventura) 이상으로 올리거나 Tesseract를 쓰세요: "
+                     "brew install tesseract tesseract-lang")
+        else:
+            doc.item("ok" if has_ocrmac else "warn", "Apple Vision OCR (ocrmac)",
+                     "사용 가능" if has_ocrmac else "설치되지 않음",
+                     "" if has_ocrmac else f"{install_hint('ocrmac')}  (한국어 인식이 더 정확합니다)")
         live = status.get("livetext", "")
         doc.item("ok" if live.startswith("ok") else "info", "Live Text (macOS 14+)",
                  "사용 가능" if live.startswith("ok") else live or "확인 불가")
@@ -846,10 +939,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     engines = [k for k, s in status.items() if s.startswith("ok")]
     doc.item("ok" if engines else "fail", "이미지/스캔 PDF용 OCR 엔진",
              ", ".join(engines) if engines else "없음 - 이미지와 스캔 PDF를 처리할 수 없습니다",
-             "" if engines else "brew install tesseract tesseract-lang 또는 pip install ocrmac")
+             "" if engines else "brew install tesseract tesseract-lang 또는 " + install_hint("ocrmac"))
     heif = importlib.util.find_spec("pillow_heif") is not None
     doc.item("ok" if heif else "info", "HEIC 사진 (pillow-heif)", "사용 가능" if heif else "없음",
-             "" if heif else "아이폰 HEIC 사진을 처리하려면: pip install pillow-heif")
+             "" if heif else "아이폰 HEIC 사진을 처리하려면: " + install_hint("pillow-heif"))
 
     # Config
     cfg_path = _config_path()
@@ -880,7 +973,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok = importlib.util.find_spec(mod) is not None
             doc.item("ok" if ok else "fail", f"NER 백엔드 ({backend})",
                      "설치됨" if ok else f"{mod} 없음",
-                     "" if ok else f"pip install 'deid-kit[{'ner' if backend == 'hf' else 'gliner'}]'")
+                     "" if ok else install_hint(*(("transformers", "torch") if backend == "hf"
+                                                  else ("gliner",))))
 
     # Ollama
     try:
@@ -900,22 +994,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         doc.item("info", "Ollama (선택)", _first_line(e))
 
     # Folders / session
-    from .session import data_dir, key_location, session_age_hours, user_dir, vault_file
+    from .session import (data_dir, key_location, keychain_problem, loose_permissions,
+                          purge_expired_session, session_age_hours, user_dir, vault_file)
 
     ud = user_dir()
     if ud.exists():
         ok = os.access(ud, os.W_OK)
         doc.item("ok" if ok else "fail", "작업 폴더 쓰기 (write access)", str(ud),
                  "" if ok else f"권한을 확인하세요: chmod u+w {ud}")
+        loose = [d for d in (ud, ud / "in", ud / "out") if d.exists() and loose_permissions(d)]
+        doc.item("warn" if loose else "ok", "작업 폴더 보호 (folder permissions)",
+                 "다른 사용자 계정도 읽을 수 있습니다: " + ", ".join(map(str, loose)) if loose else
+                 "이 계정만 읽을 수 있음 (owner only)",
+                 "chmod 700 " + " ".join(f'"{d}"' for d in loose) if loose else "")
     else:
         parent_ok = os.access(ud.parent, os.W_OK)
         doc.item("info" if parent_ok else "fail", "작업 폴더 (work folder)",
                  f"{ud} 없음 - deid shot/watch가 처음 쓸 때 만듭니다" if parent_ok else
                  f"{ud.parent}에 쓸 수 없습니다")
+    purged = purge_expired_session()
     age = session_age_hours() if vault_file().exists() else None
     doc.item("info", "세션 보관함 (clipboard session)",
-             f"{data_dir()} - " + (f"{age:.1f}시간 전 시작" if age is not None else "없음") +
+             f"{data_dir()} - " + (f"{age:.1f}시간 전 시작" if age is not None else
+                                   "만료되어 키와 함께 지움" if purged else "없음") +
              f", 키: {key_location()}")
+    problem = keychain_problem() if vault_file().exists() else None
+    if problem:
+        doc.item("warn", "세션 키 (Keychain)", problem.split(" (")[0],
+                 "키체인 접근 앱에서 로그인 키체인 잠금을 풀거나, deid forget 으로 세션을 새로 시작하세요")
     if mac.is_macos():
         missing = [t for t in ("pbcopy", "pbpaste", "osascript", "screencapture", "security")
                    if shutil.which(t) is None]
@@ -983,16 +1089,23 @@ allowlist = [
 [ocr]
 # engine = "auto"        # auto | livetext | vision | tesseract
 # lang = "kor+eng"       # tesseract 언어
-# min_conf = 30          # 이 신뢰도보다 낮은 글자는 무시
+# min_conf = 30          # 이 신뢰도보다 낮은 글자가 많으면 경고 (글자를 버리지는 않음)
 # style = "box"          # box(검은 상자) | blur(흐림) | pixelate(모자이크)
 # verify = 1             # 가린 뒤 한 번 더 읽어 남은 것까지 가림 (0이면 끔)
+# barcodes = "cover"     # 바코드/QR: cover(가림) | warn(경고만) | off
+# orientation = "auto"   # 옆으로/거꾸로 찍힌 사진도 돌려서 읽기: auto | true | false
+# pdf_images = "auto"    # PDF 안의 그림: auto(쪽의 20% 이상인 그림) | true(전부) | false(안 함)
+# pdf_dpi = 300          # 스캔 PDF를 읽을 해상도
+# docx_images = "auto"   # 워드 안의 그림: auto(어느 정도 큰 그림) | true(전부, OCR 없으면 실패) | false
+# hwpx_images = "auto"   # 한글(hwpx) 안의 그림: docx_images와 같음
+# max_image_pixels = 100000000   # 이보다 큰 그림은 처리하지 않음 (메모리 보호)
 
 # deid check 에서 쓰는 로컬 LLM (Ollama, 이 컴퓨터 안에서만 실행)
 [llm]
 # model = "gemma3:4b"
 # host = "http://127.0.0.1:11434"
 
-# 고급: 신경망 이름 인식 (설치 필요: pip install 'deid-kit[gliner]')
+# 고급: 신경망 이름 인식 (설치 필요: pipx inject deid-kit gliner)
 [ner]
 # backend = "gliner"     # hf | gliner | ollama
 # model = "urchade/gliner_multi_pii-v1"
@@ -1183,7 +1296,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("forget", "세션 보관함 삭제 (wipe the clipboard session vault and key)",
              "clip/text/serve가 기억하는 가명 목록(세션 보관함)과 그 키를 지웁니다. 지운 뒤에는 "
              "그 전에 만든 [이름1] 등을 deid restore로 복원할 수 없습니다. (보관함은 12시간이 지나면 "
-             "저절로 새로 시작합니다.)", parents=())
+             "키와 함께 저절로 지워집니다: 다음에 deid를 실행할 때, 또는 폴더 감시나 웹 화면이 켜져 "
+             "있으면 곧바로.)", parents=())
     sp.set_defaults(func=cmd_forget)
 
     sp = add("doctor", "설치 상태 점검 (environment check)",
@@ -1220,6 +1334,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not getattr(args, "func", None):
         parser.print_help()
         return EXIT_NOTHING
+    try:   # an expired clipboard session (names!) must not wait for the next clip to go
+        from .session import purge_expired_session
+        purge_expired_session()
+    except Exception:  # noqa: BLE001 - housekeeping never blocks a command
+        pass
     try:
         return int(args.func(args))
     except CliError as e:

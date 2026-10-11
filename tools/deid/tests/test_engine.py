@@ -313,3 +313,117 @@ def test_default_recognizers_missing_module_gives_clear_import_error(monkeypatch
 def test_default_recognizers_used_when_none_given(monkeypatch):
     monkeypatch.setattr(engine, "_default_recognizers", lambda cfg: [honorific_names()])
     assert texts(Detector().detect("김민준님")) == [("PERSON", "김민준")]
+
+
+# ---------------------------------------------------------------------- red-team regressions
+
+
+def _deid(text):
+    from deid import deidentify
+    return deidentify(text)[0]
+
+
+@pytest.mark.parametrize("text, secret", [
+    ("주민번호 ９４０３０５－２０４８１１７", "２０４８１１７"),
+    ("주민번호 940305－2048117", "2048117"),
+    ("연락처 ０１０－６６２１－３０９８", "６６２１－３０９８"),
+    ("등록번호 ２０４１９８７３", "２０４１９８７３"),
+    ("생년월일 １９８５．０３．１５", "０３．１５"),
+    ("이메일 ｈａｎａ＠ｎａｖｅｒ．ｃｏｍ", "ｈａｎａ"),
+    ("아빠 주민번호 940305ㅡ2048117 맞지?", "2048117"),
+])
+def test_tl03_fullwidth_and_dash_lookalikes_are_detected(text, secret):
+    out = _deid(text)
+    assert secret not in out
+    assert "생년월일" not in text or "1985년생" in out
+
+
+def test_tl03_spans_index_the_original_text():
+    text = "연락처 ０１０－６６２１－３０９８ 입니다"
+    spans = Detector().detect(text)
+    assert [(s.entity, s.text) for s in spans] == [("PHONE", "０１０－６６２１－３０９８")]
+    assert all(text[s.start:s.end] == s.text for s in spans)
+
+
+def test_mac_nbsp_separator_leak_unicode_spaces_fold_to_space():
+    for sp in (" ", " ", "　"):
+        for form in ("환자명:{s}최유나 내원", "최유나{s}님 진료 예약", "환자{s}최유나 외래 방문"):
+            text = form.format(s=sp)
+            spans = [s for s in Detector().detect(text) if s.entity == "PERSON"]
+            assert [s.text for s in spans] == ["최유나"], text
+
+
+def test_security_nfd_hangul_bypass_text_is_detected_and_offsets_map_back():
+    import unicodedata
+    text = unicodedata.normalize("NFD", "환자 김민서 님, 주소 서울특별시 강남구 테헤란로 123, 연락처 010-2345-6789")
+    spans = Detector().detect(text)
+    got = {(s.entity, unicodedata.normalize("NFC", s.text)) for s in spans}
+    assert ("PERSON", "김민서") in got and ("PHONE", "010-2345-6789") in got
+    assert any(s.entity == "ADDRESS" for s in spans)
+    assert all(text[s.start:s.end] == s.text for s in spans)
+    out = unicodedata.normalize("NFC", _deid(text))
+    assert "김민서" not in out and "테헤란로 123" not in out
+
+
+def test_mac_nfd_hangul_leak_label_and_filename_style_text():
+    import unicodedata
+    nfd = unicodedata.normalize("NFD", "성명: 정하람")
+    assert "정하람" not in unicodedata.normalize("NFC", _deid(nfd))
+    probe = unicodedata.normalize("NFD", "환자 정하람 진료기록")
+    spans = Detector().detect(probe)
+    assert [unicodedata.normalize("NFC", s.text) for s in spans] == ["정하람"]
+
+
+def test_tl06_given_name_propagation_after_full_name():
+    out = _deid("환자 김민준 (M/6) 내원. 민준이가 어제부터 열이 나서 왔어요. 민준이는 약을 잘 먹어요.")
+    assert "민준" not in out
+    out = _deid("성명: 박하준 (M/4)\n하준이 엄마 말로는 밤새 기침했다고 함")
+    assert "하준" not in out
+    # the given name alone (no hypocoristic suffix) and inside other words is left alone
+    d = det(honorific_names())
+    spans = d.detect("김민준님 내원. 민준 왔다. 이민준호 확인.")
+    assert [s.text for s in spans] == ["김민준"]
+
+
+def test_tl06_given_name_propagation_skips_large_name_lists():
+    d = det()
+    for i in range(engine.MAX_GIVEN_NAME_SOURCES + 1):
+        d.add_known("PERSON", f"김{chr(0xAC00 + i)}{chr(0xAC01 + i)}")
+    d.add_known("PERSON", "이지원")
+    assert d.detect("지원이 필요함") == []
+
+
+def test_over_mask_14_known_values_matcher_is_fast():
+    d = det()
+    for i in range(20000):
+        d.add_known("PERSON", f"{'김이박최정'[i % 5]}{chr(0xAC00 + i % 9000)}{chr(0xAC00 + i // 9000)}")
+        d.add_known("PHONE", f"010-{2000 + i // 10:04d}-{1000 + i % 9000:04d}")
+        d.add_known("MRN", str(10000000 + i))
+    t0 = time.perf_counter()
+    spans = d.detect("혈압 조절 양호, 3개월 후 재검 예정. 010-2000-1001 / 10000001")
+    assert time.perf_counter() - t0 < 2
+    assert [s.text for s in spans] == ["010-2000-1001", "10000001"]
+
+
+def test_clear_known_and_per_call_known_values():
+    d = det()
+    d.add_known("PERSON", "이서연")
+    assert [s.text for s in d.detect("이서연 내원")] == ["이서연"]
+    d.clear_known()
+    assert d.detect("이서연 내원") == []
+    assert [s.text for s in d.detect("이서연 내원", known={"PERSON": ["이서연"]})] == ["이서연"]
+    out = d.detect_document(["홍길동 내원", "12345678 확인"], known=[("PERSON", "홍길동"), ("MRN", "12345678")])
+    assert [[s.entity for s in spans] for spans in out] == [["PERSON"], ["MRN"]]
+    assert d.detect("홍길동 내원") == []   # per-call values are not kept
+
+
+def test_propagation_upgrades_keep_span_to_known_entity():
+    rec = RegexRecognizer("fake_date", "DATE", r"\d{4}-\d{2}-\d{2}", 0.85)
+    d = det(rec)
+    d.add_known("BIRTHDATE", "1985-03-02")
+    spans = d.detect("메모: 1985-03-02 생일 축하, 내원 2024-05-01")
+    assert [(s.entity, s.text) for s in spans] == [("BIRTHDATE", "1985-03-02"), ("DATE", "2024-05-01")]
+    # never the other way round: a known value whose action is "keep" does not take over
+    d2 = det(StaticRecognizer([("PHONE", "010-1234-5678", 0.9, 0)]))
+    d2.add_known("DATE", "010-1234-5678")
+    assert [s.entity for s in d2.detect("010-1234-5678")] == ["PHONE"]

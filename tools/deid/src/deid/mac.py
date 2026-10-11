@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import os
 import plistlib
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -123,6 +125,44 @@ def clipboard_has_image() -> bool:
     return info_has_image(clipboard_info())
 
 
+_CHANGE_COUNT = (
+    'use AppleScript version "2.4"',
+    'use framework "AppKit"',
+    "return (current application's NSPasteboard's generalPasteboard()'s changeCount()) as integer",
+)
+
+
+def clipboard_change_count() -> int | None:
+    """NSPasteboard change count (goes up with every copy); None when it cannot be read."""
+    if not is_macos():
+        return None
+    try:
+        proc = _osascript(_CHANGE_COUNT, timeout=10)
+    except MacError:
+        return None
+    out = proc.stdout or b""
+    text = out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)
+    try:
+        return int(text.strip()) if proc.returncode == 0 else None
+    except ValueError:
+        return None
+
+
+def clipboard_state() -> tuple[int | None, str]:
+    """(change count, clipboard info) to compare before/after a command that may copy."""
+    try:
+        info = clipboard_info()
+    except MacError:
+        info = ""
+    return clipboard_change_count(), info
+
+
+def clipboard_changed(before: tuple[int | None, str], after: tuple[int | None, str]) -> bool:
+    if before[0] is not None and after[0] is not None:
+        return before[0] != after[0]
+    return before[1] != after[1]
+
+
 _GET_IMAGE = (
     "on run argv",
     "set png to (the clipboard as «class PNGf»)",
@@ -187,24 +227,53 @@ def screencapture(path: str | os.PathLike, mode: str = "selection") -> bool:
 # ---------------------------------------------------------------------- Keychain
 
 
+# security(1) exits with the low byte of the OSStatus: errSecItemNotFound (-25300) -> 44.
+# Anything else - errSecInteractionNotAllowed (locked Keychain) 36, errSecUserCanceled 128,
+# errSecAuthFailed 51 - says nothing about whether the item exists.
+SECURITY_NOT_FOUND = 44
+
+
 def keychain_get(account: str, service: str) -> str | None:
-    """Generic password from the login Keychain, or None if there is none."""
+    """Generic password from the login Keychain, or None if there is no such item.
+
+    Raises MacError when the Keychain could not be asked (locked, prompt cancelled, timeout),
+    so a temporarily unreadable Keychain is never mistaken for "no key".
+    """
     require_macos("키체인")
     proc = run(["security", "find-generic-password", "-a", account, "-s", service, "-w"],
                timeout=15)
-    if proc.returncode != 0:
+    if proc.returncode == SECURITY_NOT_FOUND:
         return None
+    if proc.returncode != 0:
+        raise MacError(f"키체인을 읽을 수 없습니다 - 잠겨 있으면 풀고 다시 시도하세요 "
+                       f"(Keychain not readable: {_err(proc)})")
     out = proc.stdout or b""
     value = (out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)).strip()
     return value or None
 
 
+_KEYCHAIN_WORD = re.compile(r"[A-Za-z0-9._@+-]{1,256}")
+
+
 def keychain_set(account: str, service: str, secret: str) -> bool:
-    """Create or update (-U) a generic password. False if the Keychain refused."""
+    """Create or update (-U) a generic password. False if the Keychain refused.
+
+    The secret never appears on a command line (argv is visible to the user's other
+    processes and to root, and audit / EDR tools on hospital Macs log it): the command is
+    sent to ``security -i`` (interactive mode) on stdin. Only plain words are accepted (the
+    session key is hex); anything else returns False and the caller keeps the key in its
+    0600 key file instead.
+    """
     require_macos("키체인")
-    proc = run(["security", "add-generic-password", "-a", account, "-s", service, "-w", secret,
-                "-U"], timeout=15)
-    return proc.returncode == 0
+    if not all(_KEYCHAIN_WORD.fullmatch(v or "") for v in (account, service, secret)):
+        return False
+    line = f"add-generic-password -U -a {account} -s {service} -w {secret}\n"
+    proc = run(["security", "-i"], input=line.encode("ascii"), timeout=15)
+    # Interactive mode prints its prompt ("security> ") on stderr; anything else there is an
+    # error message of the add command.
+    raw = proc.stderr or b""
+    noise = (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw))
+    return proc.returncode == 0 and not noise.replace("security>", "").strip()
 
 
 def keychain_delete(account: str, service: str) -> bool:
@@ -273,7 +342,9 @@ def watch_agent_plist(deid_path: str | Sequence[str], in_dir: str | os.PathLike,
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 30,
-        "ProcessType": "Background",
+        # The user drops a file and waits for it: "Background" would confine OCR to the
+        # efficiency cores with throttled disk I/O (launchd.plist(5)).
+        "ProcessType": "Standard",
         "StandardOutPath": log,
         "StandardErrorPath": log,
         "EnvironmentVariables": {
@@ -290,20 +361,50 @@ def _gui_domain() -> str:
     return f"gui/{os.getuid()}"
 
 
+# launchctl bootstrap exit codes that mean "the old job is still being torn down".
+_BOOTSTRAP_BUSY = (5, 37)
+BOOTOUT_WAIT = 10.0
+
+
+def _agent_loaded(label: str) -> bool:
+    """True while launchd still knows the job (`launchctl print` succeeds)."""
+    try:
+        proc = run(["launchctl", "print", f"{_gui_domain()}/{label}"], timeout=15)
+    except MacError:
+        return False
+    return proc.returncode == 0
+
+
+def _bootout(label: str, wait: float = BOOTOUT_WAIT) -> None:
+    """Stop the agent and wait (bounded) until launchd has really removed it: bootout of a
+    running KeepAlive job is asynchronous (exit 36, EINPROGRESS) and a bootstrap in that
+    window fails with "5: Input/output error"."""
+    run(["launchctl", "bootout", f"{_gui_domain()}/{label}"], timeout=30)  # ignore: not loaded
+    deadline = time.monotonic() + wait
+    while _agent_loaded(label) and time.monotonic() < deadline:
+        time.sleep(0.25)
+
+
 def install_watch_agent(plist: bytes, label: str = WATCH_LABEL) -> Path:
     """Write the agent plist to ~/Library/LaunchAgents and (re)load it with launchctl."""
     require_macos("자동 감시 설치")
     path = watch_agent_path(label)
     path.parent.mkdir(parents=True, exist_ok=True)
     default_watch_log().parent.mkdir(parents=True, exist_ok=True)
-    run(["launchctl", "bootout", f"{_gui_domain()}/{label}"], timeout=30)  # ignore: not loaded
+    _bootout(label)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(plist)
     os.replace(tmp, path)
-    proc = run(["launchctl", "bootstrap", _gui_domain(), str(path)], timeout=30)
-    if proc.returncode != 0:
-        raise MacError(f"launchctl bootstrap 실패 (failed): {_err(proc)}")
-    return path
+    for attempt in range(4):
+        proc = run(["launchctl", "bootstrap", _gui_domain(), str(path)], timeout=30)
+        if proc.returncode == 0:
+            return path
+        if proc.returncode not in _BOOTSTRAP_BUSY or attempt == 3:
+            break
+        time.sleep(0.5 * (attempt + 1))   # the old job is still exiting
+        _bootout(label, wait=5.0)
+    raise MacError(f"launchctl bootstrap 실패 (failed): {_err(proc)}. 잠시 뒤 다시 실행하거나 "
+                   "로그아웃 후 다시 로그인하세요 (try again in a moment, or log out and in)")
 
 
 def uninstall_watch_agent(label: str = WATCH_LABEL) -> bool:
@@ -320,6 +421,7 @@ def uninstall_watch_agent(label: str = WATCH_LABEL) -> bool:
 __all__ = (
     "MacError", "is_macos", "require_macos", "run", "paste_text", "copy_text", "clear_clipboard",
     "clipboard_info", "info_has_image", "info_has_files", "clipboard_has_image",
+    "clipboard_change_count", "clipboard_state", "clipboard_changed",
     "get_clipboard_image", "set_clipboard_image", "screencapture", "screencapture_args",
     "keychain_get", "keychain_set", "keychain_delete", "notify", "watch_agent_plist",
     "watch_agent_path", "install_watch_agent", "uninstall_watch_agent", "WATCH_LABEL",

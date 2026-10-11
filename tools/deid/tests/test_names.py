@@ -324,3 +324,238 @@ def test_english_span_metadata():
     text = "Referred by Dr. Jane Doe."
     sp = EN.find(text, default_config())[0]
     assert text[sp.start:sp.end] == "Jane Doe" and sp.entity == PERSON and sp.source == "names_en"
+
+
+# --- red-team regressions ---------------------------------------------------
+
+@pytest.mark.parametrize("text, expected", [
+    ("선영쌤 인계드려요~ 712호 재검 나감", ["선영"]),
+    ("이브닝 공석, 김혜진 쌤 가능하다고 함", ["김혜진"]),
+    ("※ 오수아쌤 오프 신청 반려됨", ["오수아"]),
+    ("혜진쌤 오늘 데이예요", ["혜진"]),
+    ("예약안내) 유하진 고객님 11월 3일 14시 건강검진 예약확인 바랍니다.", ["유하진"]),
+    ("민원 회신 우편 발송: 노윤호 귀하", ["노윤호"]),
+    ("도경민 어린이 예방접종(DTaP 4차) 예정일 안내드립니다.", ["도경민"]),
+    ("학교 제출용: 오하율 학생 소견서 발급", ["오하율"]),
+    ("감사합니다.\n정형외과 전임의 하지아 드림", ["하지아"]),
+])
+def test_tl07_missing_honorifics(text, expected):
+    assert ko(text) == expected
+
+
+@pytest.mark.parametrize("text", ["데이쌤 인계 감사합니다", "이브쌤 인계드립니다", "담임쌤께 전화함", "수간쌤 결재",
+                                  "여고 학생 건강검진", "고객님 개인정보 보호", "어린이 예방접종 일정"])
+def test_tl07_role_words_before_new_honorifics_are_not_names(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("약국 전달사항: 보호자 며느리 정소연, 연락처는 차트 참조", ["정소연"]),
+    ("사위 박정훈 연락됨", ["박정훈"]),
+    ("손녀 김하린 동행", ["김하린"]),
+    ("보호자 동생 신유민 상주", ["신유민"]),
+    ("친정 언니 유미란한테 얘기했는데 참으라고만 해요", ["유미란"]),
+    ("환아 도경민 접종 후 이상반응 없음", ["도경민"]),
+    ("산모 김지은 분만 2기", ["김지은"]),
+    ("내담자 박서연 상담 50분", ["박서연"]),
+    ("민원인: 엄태식(환자 아들)", ["엄태식"]),
+    ("피해자 이서연 진술 청취", ["이서연"]),
+    ("대상자 변지섭 손해사정 의뢰", ["변지섭"]),
+    ("수익자 선우정민, 보험사 담당 설계사 구민혁 FC", ["선우정민", "구민혁"]),
+    ("세대주 국현철 / 수급자 국말자", ["국현철", "국말자"]),
+    ("접수자: 원무과 장수빈", ["장수빈"]),
+    ("연구간호사: 소유찬", ["소유찬"]),
+    ("담당 손해사정사 : 견미숙", ["견미숙"]),
+    ("본인 홍길자 확인 후 수령", ["홍길자"]),
+    ("Social Hx: lives with husband 남궁태식; daughter 지현 visits daily.", ["남궁태식", "지현"]),
+])
+def test_tl08_role_and_kinship_labels(text, expected):
+    assert ko(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "아버지 모시고 왔어요", "언니 소개로 내원", "친구 추천으로 방문", "대상자 선정 기준 충족", "본인 부담금 15,000원",
+    "본인 확인 완료", "산모 상태 양호", "보호자 동생과 상의함", "저희 아버지 성함은 기억이 안나요", "남편 데려와서 설명함",
+])
+def test_tl08_labels_followed_by_ordinary_words(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("발신자: 본인 이라고 함 - 이름 감나연, 진료기록 사본 요청", ["감나연"]),
+    ("증례: 45세 남, 이름 위성민, 등록번호 별도", ["위성민"]),
+    ("Trauma bay: 21세 남 오토바이 사고, 이름 연준석(본인진술)", ["연준석"]),
+    ("아드님 이름 문성호, 동의서 받고 발급할 것", ["문성호"]),
+    ("본인 동의서 받고 발급할 것. 아드님 이름 문성호", ["문성호"]),
+    ("간호사: 성함 민지호 맞으시죠?", ["민지호"]),
+    ("제 이름은 최수아고 전화는 따로 드릴게요", ["최수아"]),
+    ("아버지 성함 최 동 훈 이시고 진단서 필요합니다", ["최 동 훈"]),
+    ("이름: 최 동 훈", ["최 동 훈"]),
+    ("상담사: 성함 확인 부탁드려요.\n내담자: 마 동 현 이요.", ["마 동 현"]),
+])
+def test_tl09_name_label_without_colon_and_spelled_names(text, expected):
+    assert ko(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("- 나상민 M/52 흉통, 응급 CAG 의뢰", ["나상민"]),
+    ("나상민 52/M 흉통 r/o ACS", ["나상민"]),
+    ("나상민 52세 남 흉통으로 내원", ["나상민"]),
+    ("1. 김정숙(805호) 새벽 3시 desaturation 88%", ["김정숙"]),
+    ("AE 보고: 대상자 R-112 (민경태, 58/M, 환자번호 7738291) Day 14 rash", ["민경태"]),
+    ("원자료: 김도연, 여, DOB 1961-11-02", ["김도연"]),
+    ("1) 나상민 (M/52, #20934411) 흉통", ["나상민"]),
+    ("신분증으로 확인 전병철 680417-1290318", ["전병철"]),
+    ("f/u: 강태호 85.03.15생 HTN 약 변경 후 BP 체크", ["강태호"]),
+    ("- 오미숙 '78.09.12생 갑상선 결절", ["오미숙"]),
+    ("이하준 2023년1월5일생이에요 내일 가도 될까요", ["이하준"]),
+])
+def test_tl10_patient_list_memo_layouts(text, expected):
+    assert ko(text) == expected
+
+
+@pytest.mark.parametrize("text", ["고혈압 52세 남 다수", "진료실(201호) 이동", "강의실(301호) 교육", "상기 환자 F/45 두통"])
+def test_tl10_list_signals_need_a_name_shaped_word(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("주치의 R1 서지안, 노티함", ["서지안"]),
+    ("Attending: 윤태경 / Resident: R2 탁지훈", ["윤태경", "탁지훈"]),
+    ("10/11 토 R2 서지안 (pager 4412)", ["서지안"]),
+    ("지도전문의 국태원 확인함", ["국태원"]),
+    ("지도교수 국태원 승인", ["국태원"]),
+    ("인턴 서지안 노티함", ["서지안"]),
+    ("전공의 1년차 서지안 당직", ["서지안"]),
+])
+def test_tl11_resident_year_and_title_prefix(text, expected):
+    assert ko(text) == expected
+
+
+def test_tl18_account_holder_after_account_number():
+    assert ko("환불은 카뱅 3333-01-2345678 홍정아") == ["홍정아"]
+    assert ko("환불계좌 352-0123-4567-83 농협 홍정아로 부탁") == ["홍정아"]
+    assert ko("국민은행 123-456-789012 예금주 정하늘로") == ["정하늘"]
+    assert ko("검사 352-0123-4567-83 정상화") == []
+
+
+@pytest.mark.parametrize("text", ["제가 대리로 가도 되나요?", "제번호 01093357712 로 연락주세요",
+                                  "제가 내일 갈게요 010-1234-5678", "지도전문의 국태원 확인함"])
+def test_tl23_over_masking_common_words(text):
+    assert not {"제가", "제번호", "갈게요", "지도"} & set(ko(text))
+
+
+def test_tl23_english_label_stops_at_comma():
+    assert en("Name: Daniel Whitford, Smoker") == ["Daniel Whitford"]
+    assert en("Patient: Daniel Whitford, Reg No 30448121") == ["Daniel Whitford"]
+    assert en("Name: KIM, MINJUN, MRN 12345678") == ["KIM, MINJUN"]
+
+
+@pytest.mark.parametrize("text", [
+    "당직 선생님께 보고함.", "당직 전공의에게 연락함.", "전담 간호사 배정함.", "명예 교수 특강.", "지도 교수 면담.",
+    "원무과 선생님께 문의.", "원무과장님께 문의.", "심사 팀장 검토.", "사무장님께 전달함.", "구급차 기사 대기.",
+    "도수 치료사 배정.", "주사실 선생님께 전달.", "이장님이 모시고 내원함.", "경로당 어르신 방문 진료.",
+    "편마비 환자 재활 치료 중.", "장폐색 환자 금식 유지.", "양극성 환자 기분 안정제.",
+])
+def test_over_mask_04_modifiers_before_role_nouns(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text", [
+    "의사 소견상 수술 필요함.", "환자 동의서 작성함.", "보호자 진술상 2시간 전 쓰러짐.", "환자 부담금 15,300원.",
+    "보호자 부재중으로 추후 설명.", "담당자 부재로 회신 지연.", "진료의 연속성 확보.", "처방의 목적은 혈압 조절.",
+    "담당 부서장 결재.", "처방의: 당직의", "수신: 원무과", "수신: 심사팀", "참조: 구매팀", "보호자: 시설 담당자",
+    "모친 노인성 난청.", "부친 강직성 척추염.",
+])
+def test_over_mask_05_labels_followed_by_nouns(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text", [
+    "혈색소 기준치(남) 13.0-17.0 g/dL, 기준치(여) 12.0-16.0 g/dL", "페리틴 정상치(M) 30-400 ng/mL",
+    "가족력: 시모(70세) 당뇨", "가족력: 시부(72세) 치매", "양자(10세) 동반 내원",
+])
+def test_over_mask_06_paren_sex_age_after_nouns(text):
+    assert ko(text) == []
+
+
+@pytest.mark.parametrize("text", ["복약 설명서 드림.", "진료비 명세서 드림.", "검사 안내문 드림.", "수술 동의서 드림.",
+                                  "비급여 견적서 드림.", "입원 서약서 드림.", "원무과 올림"])
+def test_over_mask_07_document_handed_over_is_not_a_closing(text):
+    assert ko(text) == []
+
+
+def test_over_mask_07_real_closings_still_found():
+    assert ko("김민서 드림") == ["김민서"]
+    assert ko("내과 전문의 박지호 올림") == ["박지호"]
+
+
+@pytest.mark.parametrize("text", [
+    "Pt: Alert, cooperative.", "Patient: Denies chest pain.", "Patient: Stable, transferred to ward.",
+    "Nurse: Charge nurse notified.", "Attending: Cardiology", "Referred by: Cardiology clinic",
+    "Prepared by: Pharmacy", "Author: Nursing staff", "Guardian: Mother", "Emergency contact: Spouse",
+    "Drug name: Metformin", "Brand Name: Norvasc", "Test Name: Hemoglobin A1c", "Name: Complete Blood Count",
+    "Discussed with Dr. Attending at bedside.", "Prof. Rounds at 0800.", "Signed by: Electronic Signature",
+    "Re: Chest Pain Evaluation", "Sincerely,\nThe Cardiology Team", "His wife is supportive.",
+])
+def test_over_mask_08_english_labels_and_titles(text):
+    assert en(text) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Patient: Kim Min-ji (김민지), 32F", ["Kim Min-ji"]),
+    ("Dr. Kim Min-ji will see her", ["Kim Min-ji"]),
+    ("Name: 강민서 (Kang Minseo)   Sex/Age: F/45", ["Kang Minseo"]),
+    ("Referring physician: Lee Joon-ho, MD", ["Lee Joon-ho"]),
+    ("Her son Park Jae-won will bring her.", ["Park Jae-won"]),
+    ("Thanks, Choi Yun-hee (GP)", ["Choi Yun-hee"]),
+    ("Patient: Kim, 32F, Reg. No. 20184473", ["Kim"]),
+])
+def test_tl14_romanized_korean_names(text, expected):
+    assert en(text) == expected
+
+
+def test_tl14_hangul_name_in_parentheses_after_romanized_name():
+    assert ko("Patient: Kim Min-ji (김민지), 32F") == ["김민지"]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Best regards,\n\nRebecca Thornwell, MD\nDepartment of Neurology", ["Rebecca Thornwell"]),
+    ("Sincerely, Alan Fischer MD", ["Alan Fischer"]),
+    ("Re: Margaret O'Donnell, DOB 14/02/1957", ["Margaret O'Donnell"]),
+    ("RE: John A. Merriweather   MRN: 00458812\nI saw Mr. Merriweather today.",
+     ["John A. Merriweather", "Merriweather"]),
+    ("외국인 환자 Nguyen Thi Lan (베트남), 통역: 남편 Tran Van Minh", ["Nguyen Thi Lan", "Tran Van Minh"]),
+    ("Her daughter, Siobhan, can be reached on 07700 900417.", ["Siobhan"]),
+    ('보낸 사람: "Jiho Park" <jiho.park84@gmail.com>', ["Jiho Park"]),
+])
+def test_tl15_english_names_without_title(text, expected):
+    assert en(text) == expected
+
+
+def test_tl15_title_surname_extends_to_full_name_elsewhere():
+    assert en("I saw Mr. Merriweather today. John A. Merriweather was calm.") == [
+        "Merriweather", "John A. Merriweather"]
+
+
+def test_label_scan_matches_per_word_label_search():
+    from deid.recognizers import names as N
+    text = ("보호자 동생 신유민 상주. 접수자: 원무과 장수빈\n주치의 R1 서지안, 환자 김민준 보호자 이서연 "
+            "성명:  홍길동 | 환자명\t박지훈 보호자(딸) 문채원 전공의 1년차 서지안")
+    ends = N._label_ends(text)
+    for m in N._WORD_RE.finditer(text):
+        assert ends.get(m.start()) == N._label_before(text, m.start())
+
+
+def test_name_dense_text_scales_linearly():
+    import time
+    lines = [f"{i}. {'김이박최정'[i % 5]}{chr(0xAC00 + i % 400)}{chr(0xAC01 + i % 300)} 님 재측정" for i in range(6000)]
+    t0 = time.perf_counter()
+    KO.find("\n".join(lines), default_config())
+    assert time.perf_counter() - t0 < 4
+
+
+def test_verb_forms_after_family_words_are_not_names():
+    for text in ("남편 오시고 나서 설명", "엄마 가시면 연락", "아들 하셔서 다행", "이식편 45세 여"):
+        assert ko(text) == []
+    assert ko("환자 김시아 내원") == ["김시아"]

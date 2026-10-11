@@ -26,6 +26,7 @@ class FakeMac:
         self.image_set: list[str] = []
         self.notifications: list[tuple[str, str]] = []
         self.fail: set[str] = set()
+        self.agents: set[str] = set()      # launchd jobs currently loaded (labels)
 
     def __call__(self, args, *, input=None, timeout=None):
         args = list(args)
@@ -60,6 +61,25 @@ class FakeMac:
                 Path(args[-1]).write_bytes(self.capture_bytes)
             else:
                 rc = 1
+        elif tool == "launchctl":
+            label = args[-1].rsplit("/", 1)[-1]
+            if args[1] == "bootstrap":
+                self.agents.add(Path(args[-1]).stem)
+            elif args[1] == "bootout":
+                rc = 0 if label in self.agents else 3
+                self.agents.discard(label)
+            elif args[1] == "print":
+                rc = 0 if label in self.agents else 113
+        elif tool == "security" and args[1:] == ["-i"]:
+            # interactive mode: commands on stdin, prompt (and errors) on stderr
+            err = b""
+            for line in (input or b"").decode().splitlines():
+                sub = line.split()
+                if sub and sub[0] == "add-generic-password":
+                    self.keychain[(sub[sub.index("-a") + 1], sub[sub.index("-s") + 1])] = \
+                        sub[sub.index("-w") + 1]
+                err += b"security> "
+            return subprocess.CompletedProcess(args, 0, b"", err + b"security> ")
         elif tool == "security":
             acct = args[args.index("-a") + 1]
             svc = args[args.index("-s") + 1]
@@ -209,13 +229,33 @@ def test_keychain_commands(fake):
     assert fake.calls[-1] == ["security", "find-generic-password", "-a", "deid", "-s",
                               "deid-session", "-w"]
     assert mac.keychain_set("deid", "deid-session", "ab12")
-    assert fake.calls[-1] == ["security", "add-generic-password", "-a", "deid", "-s",
-                              "deid-session", "-w", "ab12", "-U"]
+    assert fake.calls[-1] == ["security", "-i"]
+    assert fake.inputs[-1] == b"add-generic-password -U -a deid -s deid-session -w ab12\n"
     assert mac.keychain_get("deid", "deid-session") == "ab12"
     assert mac.keychain_delete("deid", "deid-session")
     assert fake.calls[-1] == ["security", "delete-generic-password", "-a", "deid", "-s",
                               "deid-session"]
     assert not mac.keychain_delete("deid", "deid-session")
+
+
+def test_security_keychain_argv_secret_only_on_stdin(fake):
+    secret = "c0ffee" * 10 + "abcd"
+    assert mac.keychain_set("deid", "deid-session", secret)
+    assert not any(secret in a for call in fake.calls for a in call)
+    assert fake.keychain[("deid", "deid-session")] == secret
+
+
+def test_security_keychain_argv_errors_and_unsafe_values(fake, monkeypatch):
+    # an error printed by the add command (exit status 0 in interactive mode) is a failure
+    def failing(args, *, input=None, timeout=None):
+        return subprocess.CompletedProcess(list(args), 0, b"",
+                                           b"security> security: SecKeychainItemCreate: denied\n")
+    monkeypatch.setattr(mac, "run", failing)
+    assert not mac.keychain_set("deid", "deid-session", "ab12")
+    monkeypatch.setattr(mac, "run", fake)
+    assert not mac.keychain_set("deid", "deid-session", "ab 12")     # never quoted, refused
+    assert not mac.keychain_set("deid", "deid-session", 'x"; delete-keychain')
+    assert ("deid", "deid-session") not in fake.keychain
 
 
 def test_notify_uses_argv(fake):
@@ -290,3 +330,85 @@ def test_install_watch_agent_bootstrap_failure(fake, monkeypatch, tmp_path):
     fake.fail.add("launchctl")
     with pytest.raises(mac.MacError, match="launchctl"):
         mac.install_watch_agent(mac.watch_agent_plist("/a/deid", "/i", "/o"))
+
+
+# ---------------------------------------------------------------------- regression: ux fixes
+
+
+@pytest.mark.parametrize("code", [36, 51, 128, 1])
+def test_mac_keychain_error_wipes_session_keychain_get_raises(fake, monkeypatch, code):
+    def run(args, *, input=None, timeout=None):
+        return subprocess.CompletedProcess(args, code, b"", b"User interaction is not allowed.")
+
+    monkeypatch.setattr(mac, "run", run)
+    with pytest.raises(mac.MacError, match="키체인"):
+        mac.keychain_get("deid", "deid-session")
+
+
+def test_mac_keychain_error_wipes_session_missing_item_is_none(fake):
+    assert mac.keychain_get("deid", "deid-session") is None   # exit 44 only
+
+
+def test_mac_watch_agent_background_processtype():
+    pl = plistlib.loads(mac.watch_agent_plist("/a/deid", "/i", "/o"))
+    assert pl["ProcessType"] == "Standard"
+
+
+def test_mac_launchctl_bootout_race_waits_and_retries(fake, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(mac.time, "sleep", lambda s: None)
+    label = mac.WATCH_LABEL
+    fake.agents.add(label)                     # an older agent is running
+    state = {"exiting": 3, "busy": 1}
+    real = fake.__call__
+
+    def launchd(args, *, input=None, timeout=None):
+        if args[0] == "launchctl" and args[1] == "print" and state["exiting"]:
+            state["exiting"] -= 1               # still tearing down the old job
+            fake.calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, b"state = exiting", b"")
+        if args[0] == "launchctl" and args[1] == "bootstrap" and state["busy"]:
+            state["busy"] -= 1
+            fake.calls.append(list(args))
+            return subprocess.CompletedProcess(args, 5, b"", b"Bootstrap failed: 5: Input/output error")
+        return real(args, input=input, timeout=timeout)
+
+    monkeypatch.setattr(mac, "run", launchd)
+    mac.install_watch_agent(mac.watch_agent_plist("/a/deid", "/i", "/o"))
+    subs = [c[1] for c in fake.calls if c[0] == "launchctl"]
+    assert subs[0] == "bootout" and subs.count("print") >= 3
+    assert subs[-1] == "bootstrap" and subs.count("bootstrap") == 2   # retried once
+    assert label in fake.agents
+
+
+def test_mac_launchctl_bootout_race_gives_up_with_clear_error(fake, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(mac.time, "sleep", lambda s: None)
+    real = fake.__call__
+
+    def always_busy(args, *, input=None, timeout=None):
+        if args[0] == "launchctl" and args[1] == "bootstrap":
+            return subprocess.CompletedProcess(args, 5, b"", b"Bootstrap failed: 5: Input/output error")
+        return real(args, input=input, timeout=timeout)
+
+    monkeypatch.setattr(mac, "run", always_busy)
+    with pytest.raises(mac.MacError, match="다시"):
+        mac.install_watch_agent(mac.watch_agent_plist("/a/deid", "/i", "/o"))
+
+
+def test_mac_shot_control_key_clipboard_change_detection(fake, monkeypatch):
+    def counted(args, *, input=None, timeout=None):
+        if args[0] == "osascript" and any("changeCount" in a for a in args):
+            return subprocess.CompletedProcess(args, 0, b"42\n", b"")
+        return fake(args, input=input, timeout=timeout)
+
+    monkeypatch.setattr(mac, "run", counted)
+    assert mac.clipboard_change_count() == 42
+    assert mac.clipboard_state() == (42, fake.info)
+    assert mac.clipboard_changed((41, "a"), (42, "a"))
+    assert not mac.clipboard_changed((42, "a"), (42, "b"))      # the count wins when known
+    assert mac.clipboard_changed((None, "a"), (None, "b"))      # else compare clipboard info
+    monkeypatch.setattr(mac, "run", fake)
+    assert mac.clipboard_change_count() is None                 # no number: unknown
+    monkeypatch.setattr(mac, "is_macos", lambda: False)
+    assert mac.clipboard_change_count() is None

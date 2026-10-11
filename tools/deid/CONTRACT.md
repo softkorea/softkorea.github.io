@@ -192,3 +192,84 @@ class Vault:
 - NER backends: cfg.ner["backend"] in {"hf", "gliner", "ollama"/"llm"}; GLiNER default model is
   urchade/gliner_multi_pii-v1 (`gliner` package). Extra [ner] keys: label_map, pii_model, max_chars, overlap,
   labels, threshold, host, allow_remote, timeout.
+
+### Amendments after the red-team round (2026-10; authoritative where they differ)
+
+Engine and recognizers
+- Input folding: `Detector` runs recognizers on a folded copy of the text - non-NFC text
+  (macOS NFD Hangul) is composed to NFC with a cluster offset map; full-width ASCII and Unicode
+  horizontal spaces (NBSP ...) map 1:1; dash look-alikes between digits (incl. `ㅡ`) become `-`.
+  Returned spans always slice the ORIGINAL text (`span.text == text[start:end]`).
+- `Detector.detect(text, known=None)` / `detect_document(chunks, known=None)`: `known` adds
+  per-call values (`{entity: [values]}` or `[(entity, value), ...]`) that are propagated like
+  `add_known` values but not remembered. `Detector.clear_known()` forgets every `add_known`
+  value (they otherwise live as long as the detector: a name typed in one file of a run is
+  masked in the next file too).
+- Propagation uses hash-set lookups at candidate positions (no giant alternation regex; 60k
+  known values cost ~0.1 s per detect). It may replace a `keep` span (DATE) with a known value
+  of another entity (BIRTHDATE). Given-name forms after a full name (`민준이가`, `하준이 엄마`,
+  `서연아`, `혜진쌤`) get their own token; skipped when > 300 bulk known PERSON values exist.
+- New rule families: RRN halves and separators (1800s RRNs need a valid checksum; RRNs whose
+  birth date is in the future are rejected), phone separators, MRN label variants, birth-date
+  formats, spoken numbers, foreign passports, account holders, obfuscated e-mails, US/UK phones,
+  apartment units, romanized/English addresses, more name labels/honorifics, patient-list
+  layouts, English signature/relation names, and an OTHER reference-ID recognizer
+  (증권번호, 사고접수번호, 청구번호, 사번 ...; action redact, label 기타).
+- `진료의, 처방의, 판독의, 집도의, 의뢰의` are weak labels (after a single space only a 3+
+  syllable name counts). EMR header words (`상병명`, `진단명`, `진료일` ...) are name stopwords.
+- `api.deidentify()` runs `formats.text.deid_text()` (same pipeline as `deid text` / `deid clip`):
+  tables pasted as text are typed by column header (see below).
+
+Vault
+- `normalize_value` applies NFKC first (full-width / NFD spellings share a token).
+- `Vault.items() -> [(entity, original, token)]` in issue order.
+- `Vault.restore(text, *, links=True)`; `links=False` leaves tokens inside URLs and e-mail links
+  (`vault.link_spans(text)`: http(s)/ftp/ws/file/mailto/sms links, `www.`, `//host` after
+  `(`/`=`/quotes) unrestored, so an LLM-chosen link cannot carry real values off the computer.
+  `Vault.tokens_in_links(text)` counts them. `deid restore`, `deid text --restore` and the web
+  restore use `links=False` and report the count (`/api/restore` returns `in_links`).
+
+Config (`config.toml`)
+- Top level: `names`, `allowlist`, `min_score`, `enabled`, `disabled`; tables `[actions]`,
+  `[labels]`, `[columns]` ("header" = TYPE | "skip" | "text"), `[[patterns]]`, `[ocr]`, `[ner]`, `[llm]`.
+  Without tomllib/tomli (Python 3.10 without the dependency) a built-in TOML-subset reader
+  (`config.parse_toml`) is used; `config_from_dict(data, base=None)` applies a parsed dict.
+- `[ocr]` keys: `engine` (auto|livetext|vision|tesseract), `lang`, `psm`, `adaptive`, `upscale`,
+  `invert`, `min_conf`, `timeout`, `tesseract_cmd`, `languages`, `recognition_level`,
+  `space_gap`, `style` (box|blur|pixelate), `verify`, `orientation` (auto|true|false),
+  `barcodes` (cover|warn|off), `bare_names`, `redact_faces` (warning only), `pdf_images`
+  (auto|true|false), `pdf_dpi` (300), `docx_images` / `hwpx_images` ("auto" default | true =
+  all, fail closed without OCR | false), `max_image_pixels` (100 M), `max_frames` (300),
+  `max_total_pixels` (1.5 G).
+- `[llm]`: `model` (default gemma3:4b), `host`, `allow_remote`, `timeout`.
+
+Formats
+- Pasted tables (`formats.text.table_spans`): tab-separated rows always; comma-separated rows
+  only under a recognised header row AND each typed cell must look like its kind (PERSON:
+  `name_shaped`; others: `tabular.plausible`). `Batch.add(text, setter, entity=None, *,
+  typed=spans)` takes such cell spans. `tabular.normalize_header` strips only 1-2 trailing
+  digits ("연락처1"), so a cell holding a value ("주민번호 900101-...") is never a header.
+- Zip budget for every OOXML/HWPX read (`formats.text.zip_size_problem`, `ZIP_TOO_BIG_ERROR`):
+  512 MiB total, 256 MiB per entry, 10k entries, 200:1 ratio above 32 MiB; also `deid check`.
+- `docx.parse_xml` refuses XML parts that declare entities in an internal DTD (`DTD_ERROR`;
+  entities are never expanded, so their text would bypass detection). ActiveX `.bin` parts are
+  emptied like embeddings. Embedded images are size-checked (`image.check_pixels`) before
+  decoding; too large -> counted as unchecked.
+- Images: `image.check_pixels(size, cfg, frames=1, total=None)` raises `ImageTooLargeError`
+  before decoding. Apple Vision lines: `ocr.line_from_box(text, box, conf, engine, gray=None)`
+  places words at their ink columns (`ocr.ink_word_extents`, `OcrLine.aligned`); estimated
+  boxes get extra padding of `image.DRIFT_RATIO` x the distance to the nearer anchor (word or
+  line end). Empty Apple OCR results must be confirmed by another engine (else `OcrError`).
+- `formats.deid_filename` NFC-normalises the name and also pseudonymises bare name-shaped
+  words (`guess_name_spans`). `formats.iter_files` skips symbolic links (files and folders).
+
+CLI / web / session / mac
+- `deid serve`: uploads are processed in `$TMPDIR/deid-web-<pid>-*`; SIGHUP/SIGTERM stop the
+  server like Ctrl-C; `web.sweep_work_dirs()` deletes folders of dead servers at start and the
+  server's own at exit. `_Handler.timeout` (15 s) drops idle connections.
+- `mac.keychain_set` sends the secret to `security -i` on stdin (never in argv);
+  `mac.keychain_get` returns None only for "not found" (exit 44) and raises `MacError` otherwise.
+- `session.purge_expired_session()` (every command, watch pass, and every 60 s in `deid serve`),
+  `session.make_private_dir()` / `prepare_work_dir()` (0700 work folders).
+- `cli.install_hint(*packages)` names `pipx inject <venv>` or `<python> -m pip install`.
+- User documentation: `README.md` (Korean, for the clinician) and `macos/README.md`.

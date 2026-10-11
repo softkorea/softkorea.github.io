@@ -6,13 +6,20 @@ Standard library only (ThreadingHTTPServer). Safety rules:
   (``?t=...`` or the ``X-Deid-Token`` header), so other local users/web pages cannot use it;
 * the Host header must be ``127.0.0.1:<port>`` or ``localhost:<port>`` (DNS rebinding) and
   POSTs with a foreign ``Origin`` / ``Sec-Fetch-Site: cross-site`` are refused;
-* uploads are limited to 50 MB, processed in a TemporaryDirectory that is deleted afterwards;
+* uploads are limited to 50 MB, processed in a TemporaryDirectory that is deleted afterwards
+  (``deid-web-<pid>-*``). Closing the Terminal window (SIGHUP) or logging out (SIGTERM) stops
+  the server like Ctrl-C, so those folders are still deleted, and a folder left behind by a
+  server that was killed outright is swept at the next start;
+* idle connections time out (``_Handler.timeout``), so idle sockets opened by another local
+  process cannot use up the server's file descriptors;
 * nothing is logged (request lines contain the token; bodies contain patient data);
 * text de-identification uses the session vault, so "원래대로 복원" works (also later with
-  `deid restore`).
+  `deid restore`); while the server runs, an expired session is deleted (with its key)
+  within a minute, not only at the next request.
 
 Endpoints: ``GET /`` (page), ``POST /api/text`` {text} -> {text, counts, summary, warnings},
-``POST /api/restore`` {text} -> {text, restored, unknown}, ``POST /api/file`` (raw body with an
+``POST /api/restore`` {text} -> {text, restored, unknown, in_links} (tokens inside URLs are
+not restored), ``POST /api/file`` (raw body with an
 ``X-Filename`` header, or multipart/form-data) -> processed file as a download with an
 ``X-Deid-Report`` header (url-encoded JSON counts).
 """
@@ -20,11 +27,15 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import re
 import secrets
+import shutil
+import stat
 import sys
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +51,11 @@ if TYPE_CHECKING:  # pragma: no cover
 
 MAX_UPLOAD = 50 * 1024 * 1024
 DEFAULT_PORT = 8765
+PURGE_INTERVAL = 60.0   # seconds between checks for an expired clipboard session
+IDLE_TIMEOUT = 15.0     # seconds an open connection may stay silent
+WORK_PREFIX = "deid-web-"
+STALE_WORK_AGE = 6 * 3600.0   # untagged work folders (older versions) older than this are swept
+_WORK_DIR = re.compile(r"deid-web-(?:(\d+)-)?[a-z0-9_]{8}")
 TOKEN_HEADER = "X-Deid-Token"
 PAGE = Path(__file__).with_name("web") / "index.html"
 _UNSAFE_NAME = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
@@ -106,12 +122,31 @@ class DeidServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), _Handler)
         self.cfg = cfg if cfg is not None else load_config()
         self.token = token or secrets.token_urlsafe(24)
+        self._purge = session is None    # only the real session vault expires on disk
         if session is None:
             from .session import open_session
             session = open_session
         self.session = session
         self.work_lock = threading.Lock()
         self.page = _load_page()
+        self._last_purge = float("-inf")
+        self.service_actions()
+
+    def service_actions(self) -> None:
+        """Called by serve_forever() on every poll: delete an expired session (vault and key)
+        at most once per PURGE_INTERVAL, so it does not outlive its expiry while the page is
+        left open and unused."""
+        if not self._purge:
+            return
+        now = time.monotonic()
+        if now - self._last_purge < PURGE_INTERVAL:
+            return
+        self._last_purge = now
+        try:
+            from .session import purge_expired_session
+            purge_expired_session()
+        except Exception:  # noqa: BLE001 - housekeeping never stops the server
+            pass
 
     @property
     def port(self) -> int:
@@ -151,10 +186,11 @@ class DeidServer(ThreadingHTTPServer):
         from .session import count_tokens, unknown_tokens
 
         with self.work_lock, self.session() as vault:
-            n = count_tokens(text, vault)
+            in_links = vault.tokens_in_links(text)
+            n = count_tokens(text, vault) - in_links
             unknown = unknown_tokens(text, vault, self.cfg)
-            out = vault.restore(text)
-        return {"text": out, "restored": n, "unknown": unknown}
+            out = vault.restore(text, links=False)
+        return {"text": out, "restored": n, "unknown": unknown, "in_links": in_links}
 
     def deid_file(self, name: str, data: bytes) -> tuple[str, bytes, Report]:
         from .anonymizer import Anonymizer
@@ -162,7 +198,7 @@ class DeidServer(ThreadingHTTPServer):
         name = safe_upload_name(name)
         if not formats.is_supported(name):
             raise HttpError(415, formats.unsupported_message(name))
-        with tempfile.TemporaryDirectory(prefix="deid-web-") as td:
+        with tempfile.TemporaryDirectory(prefix=work_prefix()) as td:
             src = Path(td) / "in" / name
             src.parent.mkdir()
             src.write_bytes(data)
@@ -178,6 +214,7 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "deid"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    timeout = IDLE_TIMEOUT    # per socket read: drops idle keep-alive / never-sending clients
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         pass  # never log: URLs carry the token, bodies carry patient data
@@ -378,6 +415,98 @@ def make_server(port: int = DEFAULT_PORT, cfg: "Config | None" = None, *,
                   f"(port {port} is busy: {last})")
 
 
+def work_prefix() -> str:
+    """Prefix of this process's temporary upload folders (the pid lets a later start tell
+    folders of a live server from ones left behind by a killed one)."""
+    return f"{WORK_PREFIX}{os.getpid()}-"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:          # EPERM: exists, belongs to someone else
+        return True
+    return True
+
+
+def sweep_work_dirs(base: str | os.PathLike | None = None, *, own: bool = False) -> int:
+    """Delete temporary upload folders (they hold ORIGINAL uploads) of servers that are gone.
+
+    Only this account's ``deid-web-*`` folders directly in `base` (default: the temp folder)
+    are touched: those tagged with the pid of a process that no longer exists, untagged ones
+    (older versions) not modified for STALE_WORK_AGE, and with ``own=True`` this process's
+    own folders (at shutdown). Returns the number of folders deleted."""
+    root = Path(base) if base is not None else Path(tempfile.gettempdir())
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return 0
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    me, now, n = os.getpid(), time.time(), 0
+    for p in entries:
+        m = _WORK_DIR.fullmatch(p.name)
+        if not m:
+            continue
+        try:
+            st = p.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISDIR(st.st_mode) or (uid is not None and st.st_uid != uid):
+            continue
+        pid = int(m.group(1)) if m.group(1) else None
+        if pid == me:
+            if not own:
+                continue
+        elif pid is not None:
+            if _pid_alive(pid):
+                continue
+        elif now - st.st_mtime < STALE_WORK_AGE:
+            continue
+        shutil.rmtree(p, ignore_errors=True)
+        n += not p.exists()
+    return n
+
+
+def _stop_on_signals() -> dict:
+    """Make SIGHUP (Terminal window closed) and SIGTERM (logout, kill) stop the server like
+    Ctrl-C, so the clean-up below still runs. Returns the previous handlers."""
+    import signal
+
+    def stop(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    old: dict = {}
+    for name in ("SIGHUP", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            old[sig] = signal.signal(sig, stop)
+        except (ValueError, OSError):   # not the main thread / not supported
+            pass
+    return old
+
+
+def _restore_signals(old: dict) -> None:
+    import signal
+
+    for sig, handler in old.items():
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError, TypeError):
+            pass
+
+
+def _say(out: Any, *lines: str) -> None:
+    try:
+        for line in lines:
+            print(line, file=out, flush=True)
+    except (OSError, ValueError):    # the Terminal window is already gone
+        pass
+
+
 @contextmanager
 def running(server: DeidServer):
     """Run `server` in a background thread for the duration of the block (tests)."""
@@ -396,28 +525,35 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = True, cfg: "Config | No
           out=None) -> int:
     """Blocking `deid serve`. Returns an exit code."""
     out = out or sys.stdout
+    sweep_work_dirs()       # uploads left behind by a server that was killed outright
     try:
         server = make_server(port, cfg, tries=10)
     except OSError as e:
         print(str(e), file=sys.stderr)
         return 2
-    print("deid 웹 화면 (local web UI) - 이 컴퓨터에서만 열립니다 (127.0.0.1 only)", file=out)
-    print(f"  {server.url}", file=out)
-    print("종료: Ctrl-C (press Ctrl-C to stop)", file=out, flush=True)
-    if open_browser:
-        try:
-            import webbrowser
-            webbrowser.open(server.url)
-        except Exception:  # noqa: BLE001 - the URL is printed anyway
-            pass
+    _say(out, "deid 웹 화면 (local web UI) - 이 컴퓨터에서만 열립니다 (127.0.0.1 only)",
+         f"  {server.url}", "종료: Ctrl-C (press Ctrl-C to stop)")
+    old = _stop_on_signals()
     try:
+        if open_browser:
+            try:
+                import webbrowser
+                webbrowser.open(server.url)
+            except Exception:  # noqa: BLE001 - the URL is printed anyway
+                pass
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
-        print("\n종료합니다 (stopped)", file=out)
+        _say(out, "", "종료합니다 (stopped)")
     finally:
-        server.server_close()
+        try:
+            server.server_close()
+        finally:
+            # A request still running in its (daemon) thread dies with the process: delete
+            # its temporary copy of the original upload now.
+            sweep_work_dirs(own=True)
+            _restore_signals(old)
     return 0
 
 
 __all__ = ("DeidServer", "make_server", "serve", "running", "MAX_UPLOAD", "parse_multipart",
-           "safe_upload_name")
+           "safe_upload_name", "sweep_work_dirs")

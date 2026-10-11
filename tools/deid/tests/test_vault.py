@@ -203,3 +203,20 @@ def test_empty_passphrase_rejected(tmp_path):
 def test_missing_file_raises_file_not_found(tmp_path):
     with pytest.raises(FileNotFoundError):
         Vault.load(tmp_path / "nope.json", PASS)
+
+
+def test_vault_items_lists_entity_original_token():
+    v = Vault()
+    t1 = v.token_for("PERSON", "김민준", "이름")
+    t2 = v.token_for("MRN", "12345678", "등록번호")
+    v.token_for("PERSON", "김 민준", "이름")          # same person, no new token
+    assert v.items() == [("PERSON", "김민준", t1), ("MRN", "12345678", t2)]
+
+
+def test_tl03_vault_ignores_width_and_composition():
+    import unicodedata
+    v = Vault()
+    t = v.token_for("MRN", "20419873", "등록번호")
+    assert v.token_for("MRN", "２０４１９８７３", "등록번호") == t
+    p = v.token_for("PERSON", "김민서", "이름")
+    assert v.token_for("PERSON", unicodedata.normalize("NFD", "김민서"), "이름") == p

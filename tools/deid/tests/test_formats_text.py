@@ -434,3 +434,130 @@ def test_rtf_is_refused(tmp_path, env):
         with pytest.raises(ValueError, match="RTF"):
             T.process(src, tmp_path / ("out-" + name), det, an, cfg)
         assert not (tmp_path / ("out-" + name)).exists()
+
+
+# --------------------------------------------------------------------------- tables pasted as text
+
+
+def _deid(text: str, cfg=None) -> tuple[str, object]:
+    cfg = cfg or default_config()
+    return T.deid_text(text, Detector(cfg), Anonymizer(cfg))
+
+
+def _shape(text: str) -> list[int]:
+    return [line.count("\t") for line in text.splitlines()]
+
+
+def test_tl01_tsv_clipboard_headers_typed_by_column():
+    """tl01-tsv-clipboard-headers: Excel cells copied as TSV are typed by their header row
+    exactly like a .tsv file (bare names, MRNs and birth dates have no other context)."""
+    src = ("등록번호\t환자명\t생년월일\t연락처\n10293847\t표순자\t1949-02-11\t010-2283-1190\n"
+           "10293911\t맹옥분\t1952-07-30\t010-7721-4432\n")
+    out, rep = _deid(src)
+    assert_clean(out, "표순자", "맹옥분", "10293847", "10293911", "1949-02-11", "1952-07-30",
+                 "2283-1190")
+    assert out.splitlines()[0] == "등록번호\t환자명\t생년월일\t연락처"
+    assert _shape(out) == _shape(src) and out.endswith("\n")
+    assert "1949년생" in out
+    assert rep.counts["PERSON"] == 2 and rep.counts["MRN"] == 2
+
+    src = ("번호\t이름\t성별\t나이\t연락처\t진단\n1\t국현우\t남\t45\t010-2283-1190\tHTN\n"
+           "2\t소윤진\t여\t38\t01077214432\tDM")
+    out, _ = _deid(src)
+    assert_clean(out, "국현우", "소윤진")
+    assert "\tHTN" in out and "\t남\t45\t" in out
+
+
+def test_tl01_csv_text_with_header_row():
+    """tl01-tsv-clipboard-headers: comma-separated rows under a recognised header row."""
+    src = ("성명,주민번호,휴대폰,비고\n김도윤,8503151234567,010-1234-5679,재진\n"
+           "이서연,920407-2345678,010-2345-6780,초진")
+    out, _ = _deid(src)
+    assert_clean(out, "김도윤", "이서연", "8503151234567", "920407-2345678")
+    assert out.count(",") == src.count(",") and ",재진" in out and ",초진" in out
+    # prose with commas is no table: nothing is typed, the text stays as it was
+    prose = "환자는 두통, 어지럼, 오심을 호소함.\n혈압은 120/80, 맥박 72회, 체온 36.5도."
+    assert _deid(prose)[0] == prose
+
+
+def test_mac_clip_tsv_rows_leak_crlf_and_quoted_cells():
+    """mac_clip_tsv_rows_leak: rows copied from Excel/Numbers (CRLF line ends, quoted cells
+    with line breaks) under a 이름 header lose every name; layout is byte-identical."""
+    names = ("최유나", "박도현", "윤서진")
+    src = "이름\t나이\t진단\t담당\r\n" + "".join(
+        f"{n}\t{a}\t{d}\t외래\r\n" for n, a, d in zip(names, (45, 52, 38),
+                                                       ("고혈압", "당뇨", "갑상선기능저하증")))
+    out, rep = _deid(src)
+    assert_clean(out, *names)
+    assert out.count("\r\n") == src.count("\r\n") and _shape(out) == _shape(src)
+    assert "\t고혈압\t외래" in out and rep.counts["PERSON"] == 3
+    src = '이름\t메모\t연락처\r\n최유나\t"재진\n오후 내원"\t010-1111-2222\r\n박도현\t-\t-\r\n'
+    out, _ = _deid(src)
+    assert_clean(out, "최유나", "박도현", "1111-2222")
+    assert '"재진\n오후 내원"' in out
+
+
+def test_tl01_headerless_rows_with_sex_and_age():
+    """tl01-tsv-clipboard-headers: headerless rows 'name | sex | age | ...'."""
+    out, _ = _deid("여민하\tF\t29\t고혈압\n도하준\tM\t61\t당뇨\n1\t선우재희\t남\t45세\t천식\n")
+    assert_clean(out, "여민하", "도하준", "선우재희")
+    assert "고혈압" in out and "당뇨" in out and "천식" in out
+    # a diagnosis list with sex/age but no names stays as it is
+    rows = "고혈압\tM\t61\n당뇨\tF\t45\n"
+    assert _deid(rows)[0] == rows
+
+
+def test_tl01_text_file_with_tsv_content(tmp_path, env):
+    """tl01-tsv-clipboard-headers: the same rows saved as .txt are typed too."""
+    data = "이름\t나이\t연락처\n최유나\t45\t010-1111-2222\n박도현\t52\t-\n".encode("utf-8")
+    out, _ = run(tmp_path, env, "rows.txt", data)
+    text = out.decode("utf-8")
+    assert_clean(text, "최유나", "박도현")
+    assert _shape(text) == _shape(data.decode())
+
+
+def test_tl01_form_rows_and_generic_name_header():
+    """Label/value rows ("성명<TAB>홍길동") are typed; an '이름' column of drug names is not."""
+    out, _ = _deid("성명\t홍길동\n연락처\t010-1234-5678\n주소\t두통\n")
+    assert_clean(out, "홍길동", "1234-5678")
+    assert "주소\t두통" in out
+    drugs = "이름\t용량\t용법\n암로디핀\t5mg\t1일 1회\n메트포르민\t1000mg\t1일 2회\n"
+    assert _deid(drugs)[0] == drugs
+
+
+def test_over_mask_01_looks_like_address():
+    """over_mask-01: '주소' is also the chief complaint (主訴); only address-like values are
+    typed ADDRESS."""
+    for v in ("서울특별시 강남구 테헤란로 152", "서울 강남구", "경기 성남시 분당구", "역삼동 123-4",
+              "세종대로 110", "래미안 101동 1203호", "123 Main Street", "Seoul, Korea"):
+        assert T.looks_like_address(v), v
+    for v in ("두통", "우측 하복부 통증", "어지럼", "3일 전부터 두통, 오심 동반", "열성 경기",
+              "운동 2회 후 흉통", "허리 통증 3주", "ST elevation", "abd pain x 3 days", "-"):
+        assert not T.looks_like_address(v), v
+    assert T.typed_spans("ADDRESS", "두통") == []
+    assert [s.text for s in T.typed_spans("ADDRESS", "서울시 강남구 테헤란로 152")] == [
+        "서울시 강남구 테헤란로 152"]
+
+
+def test_over_mask_01_chief_complaint_json_and_html(tmp_path, env):
+    """over_mask-01: JSON key / HTML header '주소' over symptoms is not ADDRESS and the symptom
+    is not propagated; a real address under the same key still is."""
+    data = json.dumps({"visit": {"주소": "어지럼", "현병력": "기립 시 어지럼"},
+                       "patient": {"주소": "서울특별시 강남구 테헤란로 152", "메모": "테헤란로 152 거주"}},
+                      ensure_ascii=False).encode("utf-8")
+    out, _ = run(tmp_path, env, "cc.json", data)
+    doc = json.loads(out)
+    assert doc["visit"] == {"주소": "어지럼", "현병력": "기립 시 어지럼"}
+    assert "테헤란로" not in doc["patient"]["주소"]
+    html_src = ("<table><tr><th>내원일</th><th>주소</th><th>진단</th></tr>"
+                "<tr><td>2024-03-15</td><td>우측 하복부 통증</td><td>급성 충수염 의심</td></tr>"
+                "<tr><td>2024-03-16</td><td>두통</td><td>긴장성 두통</td></tr></table>")
+    out, _ = run(tmp_path, env, "cc.html", html_src.encode("utf-8"))
+    assert out.decode("utf-8") == html_src
+
+
+def test_merge_typed_scales_to_large_pasted_tables():
+    """A pasted table with thousands of typed cells is merged without quadratic work."""
+    rows = "\n".join(f"김민{chr(0xAC00 + i % 400)}\t010-2283-{i:04d}" for i in range(3000))
+    out, rep = _deid("이름\t연락처\n" + rows)
+    assert rep.counts["PERSON"] >= 3000 - 50 and "2283-0001" not in out

@@ -46,30 +46,57 @@ HONORIFICS = tuple(sorted({
     "과장", "과장님", "팀장", "팀장님", "실장", "실장님", "부장", "부장님", "차장", "차장님",
     "대리", "대리님", "주임", "주임님", "대표", "대표님", "이사", "이사님", "사장", "사장님",
     "회장", "회장님", "기사", "기사님", "박사", "박사님", "변호사", "변호사님",
+    # ward slang and SMS / letter templates: "선영쌤", "유하진 고객님", "노윤호 귀하",
+    # "도경민 어린이", "오하율 학생", "도경민 환아"
+    "쌤", "고객", "고객님", "귀하", "어린이", "학생", "아동", "환아", "산모",
 }, key=lambda h: (-len(h), h)))
 
 # Labels that introduce a name. Kinds: strong (single space is enough), weak (single space
 # needs a 3+ syllable name), colon (needs ':' or a table-like separator).
 _STRONG_LABELS = (
     "성명", "환자명", "환자성명", "환자이름", "수진자명", "보호자명", "보호자성명", "예금주",
-    "작성자", "신청인", "신청자", "담당의", "주치의", "담당자", "처방의", "진료의", "판독의",
-    "집도의", "의뢰인", "의뢰의", "피보험자", "수령인", "수취인", "고객명", "서명자",
-    "보낸 사람", "받는 사람", "보내는 사람", "발신인", "수신인", "발신자", "수신자",
+    "작성자", "신청인", "신청자", "담당의", "주치의", "담당자",
+    "의뢰인", "피보험자", "수령인", "수취인", "고객명", "서명자",
+    "보낸 사람", "받는 사람", "보내는 사람", "발신인", "수신인", "발신자", "수신자", "민원인",
     "대표자", "예약자", "예약자명", "환아명", "산모명", "대리인", "법정대리인", "동의자", "보증인",
     "기록자", "검사자", "확인자", "요청자", "받는분", "보내는분", "수령자",
+)
+# Family members that come before a name: "보호자 며느리 정소연", "사위 박정훈", "언니 유미란".
+KINSHIP = (
+    "며느리", "사위", "손녀", "손자", "손주", "외손자", "외손녀", "동생", "남동생", "여동생", "언니", "오빠",
+    "누나", "형", "형님", "친구", "이모", "고모", "삼촌", "외삼촌", "조카", "시어머니", "시아버지", "장모", "장인",
+    "형수", "제수", "올케", "시누이", "처제", "처형", "매형", "형부", "친척", "지인", "할머니", "할아버지",
+    "엄마", "아빠", "어머니", "아버지", "외할머니", "외할아버지", "큰아들", "작은아들", "큰딸", "작은딸",
 )
 _WEAK_LABELS = (
     "환자", "보호자", "수진자", "담당", "의사", "원장", "교수", "간호사", "전공의", "과장",
     "남편", "아내", "부인", "배우자", "아들", "딸", "모친", "부친", "Dr.", "Prof.", "Mr.", "Ms.",
-)
+    # genitive look-alikes ("진료의 연속성", "처방의 목적"): a single space needs 3+ syllables
+    "처방의", "진료의", "판독의", "집도의", "의뢰의",
+    # roles in complaint, insurance, counselling, research and ward text
+    "대상자", "내담자", "피해자", "가해자", "신고자", "수익자", "세대주", "수급자", "접수자", "환아", "산모",
+    "본인", "손해사정사", "설계사", "연구간호사", "코디네이터", "처리담당", "처리자", "상담자", "계약자",
+    "청구인", "고소인", "참고인", "증인", "진술인", "인턴", "전임의", "레지던트", "펠로우", "지도전문의",
+    "지도교수", "담당교수", "담당간호사", "R1", "R2", "R3", "R4",
+    # duty roster shifts: "나이트: 이지윤", "이브닝 표은주"
+    "데이", "이브닝", "나이트", "당직",
+) + KINSHIP
+# English family words before a Hangul name in English text: "lives with husband 남궁태식;
+# daughter 지현 visits". A Hangul word right after them is a name, so they count as strong labels.
+_EN_RELATION_LABELS = ("husband", "wife", "son", "daughter", "mother", "father", "brother", "sister",
+                       "spouse", "guardian", "caregiver", "grandson", "granddaughter")
+_STRONG_LABELS = _STRONG_LABELS + _EN_RELATION_LABELS
 _COLON_LABELS = (
     "이름", "성함", "성 명", "이 름", "수신", "참조", "발신", "name", "patient", "patient name", "pt",
+    "resident", "attending", "intern", "fellow", "nurse", "physician", "doctor", "surgeon", "guardian",
 )
 NAME_LABELS = _STRONG_LABELS + _WEAK_LABELS + _COLON_LABELS
+_LABEL_WORDS = frozenset(lab.replace(" ", "") for lab in NAME_LABELS if not lab.isascii())
 
 # Common words (mostly clinical) that begin with a surname syllable. A name candidate equal to
 # one of these, or one of these plus a particle/suffix, is never reported.
 STOPWORDS = frozenset("""
+상병 상병명 주상병 부상병 상병코드 진단명 진료일 진료일자 기관명 기관코드 진찰료 진료과목
 이상 이하 이후 이전 이번 이미 이제 이유 이용 이동 이송 이해 이행 이외 이내 이날 이곳 이쪽 이분
 이들 이것 이런 이름 이야기 이웃 이모 이사 이사장 이번주 이월 이틀 이명 이완 이물 이물감 이식
 이환 이차 이뇨제 이미지 이용자 이민 이상한 이상함 이비인후과 이혼 이전원 이해도
@@ -158,6 +185,32 @@ STOPWORDS = frozenset("""
 사촌오빠 사촌누나 시누이 시동생 시어머니 시아버지 시어머님 시아버님 시부모 시부모님 시댁 조카딸
 조카사위 손자녀 손주 사위 오빠 남자친구 여자친구 남친 여친 동거인 동거녀 동거남 외손자 외손녀
 모바일 연락망 비상연락 비상연락망 대표번호 공용폰
+제가 제게 제번호 제꺼 제것 제폰 제차 지도 지도의 지도자
+당직 당직의 당직실 전담 전문 경력 상근 정규직 명예 석좌 원무 원무과 원무과장 심사 심사팀 시설 기획
+인사 인사팀 사무장 사무실 이장 이장님 도수 구급차 주사실 채혈실 상담실 처치실 노인정 경로당 구매 구매팀
+부서 부서장 부재 부재중 목적 연속 연속성
+편마비 장폐색 신결석 양극성 노인성 강직성 경계성 지속성 재발성 진행성 신경성 기능성 기질성 특발성
+본태성 이차성 일차성 선천성 후천성 유전성 가족성 다발성 국소성 결절성 출혈성 허혈성 폐쇄성 수축성
+이완성 감염성 염증성 전이성 양성 음성 악성 당뇨병성 고혈압성 알코올성 약물성
+소견상 진술상 진술서 동의서 부담금 설명서 명세서 안내문 안내서 안내지 신청서 기록지 견적서 서약서
+진단서 처방전 영수증 확인서 계약서 위임장 청구서 증명서 신고서 요청서 의뢰서 회신서 결과지 검사지
+설문지 문진표 일정표 주의사항 복약지도 교육지 소개서 경위서 사유서 각서 협조문 공문
+기준치 정상치 목표치 상한치 하한치 최대치 최소치 표준치 한계치 측정치 수치 평균치
+시모 시부 시누 시숙 양자 양녀 장손 제부 시조부 시조모
+이브 이브닝 데이 나이트 차지 프리셉터 오프 근무 당번 주간 야간 상주 공일공 영일영 공공
+이라고 이라는 이라서 이라며 이라도 이라면 이래서 이래도 이래요 이랬어요 이었는데 이었어요 이에요 이예요
+이므로 이니까 이십니다 이시고 이세요 이신 이시죠 이잖아요
+모시 모셔 모시고 모셔서 모시러 모시는 모신 모실 모셨 모셔다 시켜 시켜서 시키고 시킨 도와 도와서 도와주
+성함 성명 소개 추천 부탁 주선 권유 걱정 고민 요청 요구 설득 반대 허락 동의하
+오셔 오셔서 오시고 오신 가서 가시고 가셔서 보내고 보내서 데리고 데려 데려와 데려가
+""".split())
+# Ward roles / shift words that come before 쌤 without being names ("데이쌤", "담임쌤").
+_SSAM_STOP = frozenset("""
+담임 원장 실장 팀장 수간 책임 주임 영양 물리 작업 방사 임상 병리 약제 간호 보건 상담 국어 수학 영어 과학
+체육 미술 음악 기술 가정 사회 역사 도덕 한문 담당 당직 전담 치료 데이 이브 나이트 차지 인턴 레지 전공
+교수 과장 부장 행정 원무 접수 수납 코디 연구 외래 병동 응급 수술 마취 회복 투석 내시 검사 채혈 주사 처치
+재활 언어 놀이 운동 인지 심리 교육 학원 피아노 태권 수영 발레 학습 방과 돌봄 보육 유치 선배 후배 동기
+신규 경력 프셉 담임선 부담임 보조 실습 교생 원어민
 """.split())
 
 # Endings that make a word a common noun even when the start looks like a name.
@@ -170,14 +223,27 @@ _NONNAME_SUFFIXES = (
 _NONNAME_FINALS = frozenset("감증염통혈암약술법병")
 # Syllables that end particles, nominal endings or noun suffixes; STOPWORD + one of these
 # (e.g. "상태가", "이해함", "유형별") is not a name.
-_SPLIT_FINALS = frozenset("가이는은를을의께와과도만랑에로아야나들등별적률율량측쪽내외간씩쯤째뿐함됨음임인한된할될해중시하")
+# Also unit / department / document finals that given names practically never end with
+# ("부담금", "심사팀", "원무과", "구급차"); 서/성/상/지 are common name finals, so compounds such as
+# 동의서, 연속성, 소견상 are listed in STOPWORDS instead.
+_SPLIT_FINALS = frozenset("가이는은를을의께와과도만랑에로아야나들등별적률율량측쪽내외간씩쯤째뿐함됨음임인한된할될해중시하"
+                          "금장팀실부차문표증권치값고며러면편")
+# Finals of a value / document / place noun: never a name when the paren (sex/age) or the
+# letter-closing rule is the only signal ("기준치(남)", "설명서 드림", "원무과 올림").
+_PAREN_BAD_FINALS = frozenset("치값량율률")
+_DOC_FINALS = frozenset("서지문표증권장실과팀부")
 # A given name never ends with these syllables ("이수는" -> 이수 + 는).
-_BAD_FINALS = frozenset("는를의에께함됨음임했됐됩합습")
+_BAD_FINALS = frozenset("는를의에께함됨음임했됐됩합습으")
+# Honorific verb forms after a family word: "남편 오시고", "엄마 가시면", "아들 하셔서".
+_VERB_GIVENS = frozenset("시고 시면 시며 시니 시러 시게 시지 시는 시던 셔서 셔야 셨고 셨다 신다 신데 실때 십니".split())
+# A weak label ("언니", "환자") followed by a noun + particle: "언니 소개로", "환자 걱정과".
+_WEAK_LABEL_BAD_FINALS = frozenset("로을와과")
 # Particle-like finals that are also common at the end of given names (지은, 하은, 영도, 민아).
 _AMBIGUOUS_FINALS = frozenset("이은도만가과와을랑아야나")
 # Honorifics that are ordinary nouns too ("고령 환자", "상기 보호자"): a 2-syllable name
 # followed only by one of these is ignored.
 _NOUNISH_HON = frozenset({
+    "고객", "고객님", "귀하", "어린이", "학생", "아동", "환아", "산모",
     "환자", "환자분", "환자님", "보호자", "보호자분", "보호자님", "어머니", "아버지", "할머니",
     "할아버지", "어머님", "아버님", "할머님", "할아버님", "어르신", "대표", "대표님", "기사",
     "기사님", "이사", "이사님", "사장", "사장님", "회장", "회장님", "박사", "박사님", "여사",
@@ -209,8 +275,42 @@ _BORN = r"(?:(?:19|20)?\d{2}[ ]?년[ ]?생|(?:19|20)\d{2}[.\-/][01]?\d[.\-/][0-3
 _PAREN_RE = re.compile(
     rf"[ ]?[(（][ ]*(?:{_SEX}[ ]*[/,·][ ]*{_AGE}|{_AGE}[ ]*[/,·][ ]*{_SEX}"
     rf"|[MF][ ]?\d{{1,3}}|\d{{1,3}}[ ]?[MF]|(?:만[ ]?)?\d{{1,3}}[ ]?세|{_SEX}"
-    rf"|{_BORN}(?:[ ]*[/,·][ ]*{_SEX})?)[ ]*[)）]"
+    rf"|{_BORN}(?:[ ]*[/,·][ ]*{_SEX})?)"
+    r"(?:[ ]*[,;][^()（）\n]{0,40})?[ ]*[)）]"   # "(M/52, #20934411)"
 )
+# Patient-list layouts: "나상민 M/52", "나상민 52/M", "나상민 52세 남", "김정숙(805호)".
+_SEXAGE_AFTER = re.compile(
+    r"[ ]{1,2}(?:(?:남|여|[MF])[ ]?/[ ]?\d{1,3}(?![0-9])|\d{1,3}[ ]?/[ ]?(?:남|여|[MF])(?![A-Za-z가-힣])"
+    r"|(?:만[ ]?)?\d{1,3}[ ]?세[ ]?(?:남|여)(?:자|성|아)?(?![가-힣])|(?:남|여)(?:자|성)?[ ]?/?[ ]?(?:만[ ]?)?\d{1,3}[ ]?세)"
+)
+_ROOM_PAREN_RE = re.compile(r"[ ]?[(（][ ]*\d{3,4}[ ]?호(?:실)?(?:[ ]*[,/][^()（）\n]{0,30})?[ ]*[)）]")
+# An identifying number right after the name: RRN or a birth date with 생 ("전병철 680417-1290318",
+# "강태호 85.03.15생", "이하준 2023년1월5일생").
+_ID_AFTER = re.compile(
+    r"[ \t]{1,3}(?:[/,|:：][ \t]{0,3})?(?:\d{6}[ \t]?-[ \t]?[1-8][0-9*xX●]{6}(?![0-9])"
+    r"|['’]?(?:19|20)?\d{2}[.\-/][ ]?\d{1,2}[.\-/][ ]?\d{1,2}[ ]?[생生]"
+    r"|(?:19|20)?\d{2}[ ]?년[ ]?(?:\d{1,2}[ ]?월[ ]?(?:\d{1,2}[ ]?일[ ]?)?)?[생生])"
+)
+# "(민경태, 58/M, ...", "원자료: 김도연, 여, DOB ...": a record that starts with the name.
+_RECORD_START = re.compile(r"(?:^|[\n(（\[:：|]|[-*•·▶]|\d{1,3}[.)])[ \t]*\Z")
+_SEX_FIELD_AFTER = re.compile(
+    rf"[ ]*[,/][ ]*(?:{_SEX}[ ]*[/,·][ ]*(?:만[ ]?)?\d{{1,3}}|(?:만[ ]?)?\d{{1,3}}[ ]?(?:세|살)?[ ]*[/,·][ ]*{_SEX}"
+    r"|[MF][ ]?\d{1,3}(?![0-9])|\d{1,3}[ ]?[MF](?![A-Za-z])|(?:만[ ]?)?\d{1,3}[ ]?세"
+    r"|(?:남자|여자|남|여|[MF])(?=[ ]*(?:[,/)）\n]|$)))"
+)
+# A Korean name in parentheses after a romanized one: "Kim Min-ji (김민지)".
+_LATIN_PAREN_BEFORE = re.compile(r"(?<![A-Za-z])[A-Z][A-Za-z'\-]+[ ]?[(（]\Z")
+# Account holder after the account number (and bank): "카뱅 3333-01-2345678 홍정아".
+_ACCOUNT_BEFORE = re.compile(
+    r"(?<![0-9])(?P<num>[0-9]{2,6}(?:[- ][0-9]{2,7}){1,4})[ \t]+(?:[(（]?[가-힣A-Za-z]{1,8}[)）]?[ \t]+)?"
+    r"(?:예금주[ \t]*[:：]?[ \t]*)?\Z"
+)
+_CTX_ACCOUNT_NEAR = re.compile(
+    r"계좌|은행|뱅크|카뱅|케뱅|토뱅|농협|국민|신한|우리|하나|기업|우체국|새마을|신협|수협|씨티|입금|환불|송금|이체",
+    re.IGNORECASE,
+)
+# Verb / sentence endings: "갈게요 010-...", "할게요" are not names before a phone number.
+_VERB_END = re.compile(r"(?:요|죠|다|까|네|게|래)$")
 # KakaoTalk exports: "[홍길동] [오후 2:13] ..." (PC) and "2024. 3. 15. 오후 2:13, 홍길동 : ..." (mobile).
 _KAKAO_TIME = r"(?:오전|오후|AM|PM)[ ]?\d{1,2}:\d{2}"
 _KAKAO_PC_BEFORE = re.compile(r"(?:^|\n)[ \t]*\[\Z")
@@ -231,7 +331,7 @@ _HYPOCORISTIC = frozenset(c for c in _I_COMBOS if c != "이나")  # "3개월이�
 # Verb-stem finals of nouns that end in a derivational 이 (양손잡이, 고집쟁이, 하루살이, 가슴앓이).
 _DEVERBAL_FINALS = frozenset("잡쟁박뱅둥깎놀살맞닦앓받막풀벌떨걸갈먹찍꽂붙뚫묶넣깔밟씻팔꾼낚")
 _COPULA = frozenset({"입니다", "이에요", "예요", "이예요", "인데요", "인데", "이고요", "이고", "이요", "이야",
-                     "이라고", "라고"})
+                     "이라고", "라고", "고", "고요", "구요", "이구요", "이시고", "이십니다"})
 
 
 def _label_regex(label: str) -> str:
@@ -244,11 +344,29 @@ for _kind, _labels in (("strong", _STRONG_LABELS), ("weak", _WEAK_LABELS), ("col
     for _lab in _labels:
         # First kind wins: the spaced form "성 명" must not demote the strong label "성명".
         _LABEL_KIND.setdefault(_lab.replace(" ", "").lower(), _kind)
-_LABEL_RE = re.compile(
+# One word may stand between a label and the name: a department ("접수자: 원무과 장수빈"), a
+# family relation ("보호자 동생 신유민") or a training year ("주치의 R1 서지안", "전공의 1년차 서지안").
+_LABEL_MID = (r"(?P<mid>(?:[가-힣]{1,6}(?:과|팀|실|센터|병동|파트)|" + "|".join(sorted(KINSHIP, key=len, reverse=True))
+              + r"|R[1-4]|PGY-?[1-4]|[1-4][ ]?년차|인턴|전공의|전임의)[ ]{1,2})?")
+_LABEL_BODY = (
     rf"(?<![가-힣A-Za-z])(?P<label>{'|'.join(_label_regex(x) for x in sorted(NAME_LABELS, key=len, reverse=True))})"
     r"(?:[ ]?[(（][^()（）\n]{1,10}[)）])?"  # relation: "보호자(딸) 문채원", "보호자(배우자): ..."
-    r"(?P<sep>[ \t]{0,4}[:：|][ \t]{0,4}|\t[ \t]{0,6}|[ ]{1,6})\Z"
+    r"(?P<sep>[ \t]{0,4}[:：|][ \t]{0,4}|\t[ \t]{0,6}|[ ]{1,6})" + _LABEL_MID
 )
+_LABEL_RE = re.compile(_LABEL_BODY + r"\Z")
+# Same without the leading lookbehind (checked in code), so the regex engine can jump between
+# candidate first characters instead of trying every position.
+_LABEL_SCAN_RE = re.compile(_LABEL_BODY.replace("(?<![가-힣A-Za-z])", "", 1))
+_LABEL_GLUE = re.compile(r"[가-힣A-Za-z]")
+_LABEL_WINDOW = 40
+# 이름 / 성함 with a single space ("이름 감나연,", "성함 민지호 맞으시죠?"): the value must end the
+# field or be followed by a copula.
+_NAME_WORD_LABELS = frozenset({"이름", "성함"})
+_NAME_FIELD_AFTER = re.compile(r"[ ]?[,(（/]|[ ]맞|[ ]?(?:이시고|이시구요|이세요|이십니다)")
+# Spelled-out syllables after a name question or label: "성함 최 동 훈 이시고", "이름: 최 동 훈".
+_SPELLED_RE = re.compile(
+    r" ([가-힣]) ([가-힣])(?![가-힣])(?=[ ]?(?:이시고|이고|이요|입니다|이에요|예요|요|고|이시구요|구요|씨|님)?(?![가-힣]))")
+_SPELL_CTX = re.compile(r"이름|성함|성명|\bname\b", re.IGNORECASE)
 # Letter closings written after a full name: "김하윤 드림", "박서준 올림".
 _CLOSING_RE = re.compile(r" (?:드림|올림)(?![가-힣A-Za-z0-9])")
 # Object-like particles that make "<word> 드림" a verb phrase ("자료를 드림", "안내도 드림").
@@ -278,6 +396,8 @@ def _has_mask(s: str) -> bool:
 
 def strip_particle(word: str) -> str:
     """Drop one trailing particle ("김민준이" -> "김민준"); keeps 3-syllable names like "김지은"."""
+    if not word.endswith(PARTICLES):
+        return word
     for p in PARTICLES:
         if len(word) - len(p) < 2 or not word.endswith(p):
             continue
@@ -314,22 +434,28 @@ def _givens(name: str) -> list[str]:
     return out
 
 
-def _rejected(name: str, word: str, hon: str | None = None, field: bool = False) -> bool:
+def _rejected(name: str, word: str, hon: str | None = None, field: bool = False,
+              closing: bool = False) -> bool:
     """True when the candidate is (or looks like) an ordinary word rather than a name.
 
     `field`: the value of a strong labelled field ("신청인: 국가은"), where a stopword plus a
-    particle-like final ("국가" + "은") is still read as a name.
+    particle-like final ("국가" + "은") is still read as a name; `closing` likewise for a letter
+    closing ("하지아 드림").
     """
     flat = name.replace(" ", "")
     if flat in STOPWORDS or word in STOPWORDS or strip_particle(word) in STOPWORDS:
         return True
+    if flat in _LABEL_WORDS or word in _LABEL_WORDS:
+        return True  # "예금주", "내담자", "며느리" are labels, never the name itself
     if _has_mask(flat):
         return False
-    if any(g.startswith(h) for g in _givens(flat) for h in _HON_MULTI):
+    if any(g.startswith(_HON_MULTI) for g in _givens(flat)):
         return True  # 김선생님, 정교수, 박사장
     if word.endswith(_NONNAME_SUFFIXES) or (len(flat) >= 3 and flat[-1] in _NONNAME_FINALS):
         return True
-    if field or (hon is not None and hon[0] in "님씨"):
+    if len(flat) == 3 and flat[1:] in _VERB_GIVENS:
+        return True
+    if field or closing or (hon is not None and hon[0] in "님씨쌤"):
         return False  # 님/씨 follow names, so "이상은 님" stays a name
     return len(flat) >= 3 and flat[:-1] in STOPWORDS and flat[-1] in _SPLIT_FINALS
 
@@ -343,23 +469,68 @@ def _kakao_sender(text: str, start: int, end: int) -> bool:
     )
 
 
-def _label_before(text: str, start: int) -> tuple[str, bool] | None:
-    """(kind, table_like) when a name label directly precedes `start` on the same line."""
-    m = _LABEL_RE.search(text, max(0, start - 40), start)
-    if not m:
-        return None
+def _label_info(m: re.Match) -> tuple[str, bool, str]:
     sep = m.group("sep")
     table_like = any(c in sep for c in ":：|\t") or len(sep) >= 2
-    return _LABEL_KIND.get(re.sub(r"\s", "", m.group("label")).lower(), "weak"), table_like
+    norm = re.sub(r"\s", "", m.group("label")).lower()
+    return _LABEL_KIND.get(norm, "weak"), table_like, norm
 
 
-def _label_ok(label: tuple[str, bool], name: str) -> bool:
-    kind, table_like = label
+def _label_before(text: str, start: int) -> tuple[str, bool, str] | None:
+    """(kind, table_like, label) when a name label directly precedes `start` on the same line."""
+    m = _LABEL_RE.search(text, max(0, start - _LABEL_WINDOW), start)
+    return _label_info(m) if m else None
+
+
+def _label_ends(text: str) -> dict[int, tuple[str, bool, str]]:
+    """_label_before() for every position at once: {name start: label info}.
+
+    One scan over the text instead of a regex search before every word. Like the per-word
+    search, the leftmost label that ends right before a position wins.
+    """
+    out: dict[int, tuple[str, bool, str]] = {}
+    pos = 0
+    while True:
+        m = _LABEL_SCAN_RE.search(text, pos)
+        if m is None:
+            return out
+        if m.start() > 0 and _LABEL_GLUE.match(text, m.start() - 1):
+            pos = m.start() + 1
+            continue
+        info = _label_info(m)
+        ends = (m.end("sep"), m.end()) if m.group("mid") else (m.end(),)
+        for end in ends:
+            if end - m.start() <= _LABEL_WINDOW:
+                out.setdefault(end, info)
+        pos = m.start() + 1
+
+
+def _label_ok(label: tuple[str, bool, str], name: str, text: str = "", end: int = 0,
+              tail: str = "") -> bool:
+    kind, table_like, norm = label
     if table_like:
         return True
+    flat = len(name.replace(" ", ""))
     if kind == "colon":
+        # "이름 감나연,", "성함 민지호 맞으시죠?": 이름/성함 + one space when the value ends a field
+        if norm not in _NAME_WORD_LABELS or flat < 3:
+            return False
+        if tail in _COPULA:
+            return True
+        line_end = end >= len(text) or text[end] in "\r\n" or text[end:].lstrip(" \t")[:1] in ("", "\n")
+        return not tail and (_NAME_FIELD_AFTER.match(text, end) is not None
+                             or (line_end and name[-1] != "기"))  # not "이름 부르기"
+    return kind == "strong" or flat >= 3 or _has_mask(name)
+
+
+def _account_holder(text: str, start: int) -> bool:
+    """True when `start` directly follows a bank account number (and bank name)."""
+    if not any(c.isdigit() for c in text[max(0, start - 16):start]):
         return False
-    return kind == "strong" or len(name.replace(" ", "")) >= 3 or _has_mask(name)
+    m = _ACCOUNT_BEFORE.search(text, max(0, start - 45), start)
+    if not m or not 10 <= sum(c.isdigit() for c in m.group("num")) <= 16:
+        return False
+    return _CTX_ACCOUNT_NEAR.search(text, max(0, m.start() - 25), start) is not None
 
 
 def _spaced_honorific(text: str, end: int) -> str | None:
@@ -413,11 +584,13 @@ def _finish(text: str, hits: dict[tuple[int, int], list[float]], extra: list[Spa
     spans = list(best.values())
     allow = set(cfg.allowlist)
     spans = [sp for sp in spans if sp.text not in allow and sp.text.strip() not in allow]
-    keep = [
-        sp for sp in spans
-        if not any(o is not sp and o.start <= sp.start and sp.end <= o.end
-                   and (o.end - o.start) > (sp.end - sp.start) for o in spans)
-    ]
+    # Drop spans nested inside a longer one: one sweep by (start, longest first); every earlier
+    # span starts at or before this one, so the running max end tells whether one covers it.
+    keep, max_end = [], -1
+    for sp in sorted(spans, key=lambda sp: (sp.start, -sp.end)):
+        if sp.end > max_end:
+            keep.append(sp)
+        max_end = max(max_end, sp.end)
     return sorted(keep, key=lambda sp: (sp.start, sp.end))
 
 
@@ -433,25 +606,42 @@ class KoreanNameRecognizer:
         def add(s: int, e: int, scores: list[float]) -> None:
             hits.setdefault((s, e), []).extend(scores)
 
-        for m in _WORD_RE.finditer(text):
-            self._scan_word(text, m.start(), m.end(), m.group(), add)
+        words = list(_WORD_RE.finditer(text))
+        labels = _label_ends(text) if words else {}
+        for m in words:
+            self._scan_word(text, m.start(), m.end(), m.group(), add, labels)
         return _finish(text, hits, _dict_spans(text, cfg, hangul=True), cfg, self.name)
 
     @staticmethod
     def _scan_word(text: str, ws: int, we: int, word: str,
-                   add: Callable[[int, int, list[float]], None]) -> None:
-        label = _label_before(text, ws)
+                   add: Callable[[int, int, list[float]], None],
+                   labels: dict[int, tuple[str, bool, str]] | None = None) -> None:
+        label = labels.get(ws) if labels is not None else _label_before(text, ws)
         if word in SURNAMES:
             KoreanNameRecognizer._scan_spaced(text, ws, we, word, label, add)
             return
         next_hon = _spaced_honorific(text, we)
+        lengths = _name_lengths(word)
+        if not lengths:
+            KoreanNameRecognizer._scan_ssam(text, ws, word, next_hon, add)
+            return
         paren = _PAREN_RE.match(text, we) is not None
+        room = _ROOM_PAREN_RE.match(text, we) is not None
         closing = _CLOSING_RE.match(text, we) is not None
         intro = _INTRO_BEFORE.search(text, max(0, ws - 12), ws) is not None
-        mobile = _MOBILE_AFTER.match(text, we) is not None
+        mobile = _MOBILE_AFTER.match(text, we) is not None and not _VERB_END.search(word)
+        # patient-list layouts, an ID / birth date right after the name, an account holder, or a
+        # Korean name in parentheses after a romanized one
+        listed = bool(_SEXAGE_AFTER.match(text, we) or _ID_AFTER.match(text, we)
+                      or (_SEX_FIELD_AFTER.match(text, we)
+                          and _RECORD_START.search(text, max(0, ws - 12), ws))
+                      or (text[we:we + 1] in (")", "）") and ("(" in text[max(0, ws - 2):ws]
+                                                                or "（" in text[max(0, ws - 2):ws])
+                          and _LATIN_PAREN_BEFORE.search(text, max(0, ws - 40), ws)))
+        holder = _account_holder(text, ws)
         field = label is not None and label[0] == "strong" and (
             label[1] or _FIELD_END_RE.match(text, we) is not None)
-        for k in _name_lengths(word):
+        for k in lengths:
             name, tail = word[:k], word[k:]
             hm = _TAIL_HON_RE.fullmatch(tail) if tail else None
             scores: list[float] = []
@@ -462,9 +652,17 @@ class KoreanNameRecognizer:
                 hon = next_hon
             if hon and not (len(name) == 2 and hon in _NOUNISH_HON and not _has_mask(name)):
                 scores.append(_SCORE_HON)
-            if not tail and paren:
+            if not tail and paren and name[-1] not in _PAREN_BAD_FINALS:  # not "기준치(남)"
                 scores.append(_SCORE_PAREN)
-            if not tail and closing and len(name) >= 3 and name[-1] not in _CLOSING_BAD_FINALS:
+            if not tail and room and len(name) >= 3 and name[-1] not in _NOT_BEFORE_PHONE:
+                scores.append(_SCORE_PAREN)
+            if not tail and listed and (len(name) >= 3 or _has_mask(name)):
+                scores.append(_SCORE_PAREN)
+            if holder and (not tail or _TAIL_PART_RE.fullmatch(tail)) and (len(name) >= 3 or _has_mask(name)):
+                scores.append(_SCORE_PAREN)  # "카뱅 3333-01-2345678 홍정아(로)"
+            closed = (not tail and closing and len(name) >= 3 and name[-1] not in _CLOSING_BAD_FINALS
+                      and not (name[-1] in _DOC_FINALS and name[:-1] in STOPWORDS))  # "설명서 드림"
+            if closed:
                 scores.append(_SCORE_HON)
             intro_end = tail in _COPULA or (not tail and (we == len(text) or text[we] in ",.!?"))
             if intro and len(name) >= 3 and intro_end:  # "저는 김민준입니다", "저 김민준, ..."
@@ -476,17 +674,42 @@ class KoreanNameRecognizer:
                 scores.append(_SCORE_HON)
             if not tail and _kakao_sender(text, ws, ws + k):
                 scores.append(_SCORE_LABEL["strong"])
-            if label and (not tail or hm or _TAIL_PART_RE.fullmatch(tail)) and _label_ok(label, name):
+            if (label and (not tail or hm or _TAIL_PART_RE.fullmatch(tail) or tail in _COPULA)
+                    and _label_ok(label, name, text, we, tail)
+                    and not (label[0] == "weak" and not label[1] and name[-1] in _WEAK_LABEL_BAD_FINALS)):
                 scores.append(_SCORE_LABEL[label[0]])
-            if scores and not _rejected(name, word, hon, field=field and not tail):
+            if scores and not _rejected(name, word, hon, field=field and not tail, closing=closed):
                 add(ws, ws + k, scores)
                 return
+        KoreanNameRecognizer._scan_ssam(text, ws, word, next_hon, add)
+
+    @staticmethod
+    def _scan_ssam(text: str, ws: int, word: str, next_hon: str | None,
+                   add: Callable[[int, int, list[float]], None]) -> None:
+        """Given name only + 쌤 ("혜진쌤", "혜진 쌤"), the usual way staff address each other."""
+        m = re.fullmatch(rf"([가-힣]{{2}})쌤(?:{_PART_ALT})?", word)
+        if m:
+            given = m.group(1)
+        elif len(word) == 2 and next_hon == "쌤" and all(_is_hangul(c) for c in word):
+            given = word
+        else:
+            return
+        if given in STOPWORDS or given in _SSAM_STOP or given[-1] in _BAD_FINALS:
+            return
+        add(ws, ws + 2, [_SCORE_HON])
 
     @staticmethod
     def _scan_spaced(text: str, ws: int, we: int, surname: str,
-                     label: tuple[str, bool] | None,
+                     label: tuple[str, bool, str] | None,
                      add: Callable[[int, int, list[float]], None]) -> None:
         """"김 민준 님" / "성명: 김 민준": surname and given name split by one space."""
+        sm = _SPELLED_RE.match(text, we)
+        if sm and _SPELL_CTX.search(text, max(0, ws - 40), ws):
+            # spelled out syllable by syllable after a name question / label: "성함 최 동 훈 이시고"
+            given = sm.group(1) + sm.group(2)
+            if given not in STOPWORDS and given[-1] not in _BAD_FINALS:
+                add(ws, sm.end(2), [_SCORE_SPACED])
+                return
         if surname in _DETERMINERS or text[we:we + 1] != " ":
             return
         m = _WORD_RE.match(text, we + 1)
@@ -503,7 +726,7 @@ class KoreanNameRecognizer:
         by_label = label is not None and label[0] != "weak" and (not tail or _TAIL_PART_RE.fullmatch(tail))
         if not (hon or by_label) or given in STOPWORDS or given[-1] in _BAD_FINALS:
             return
-        if any(given.startswith(h) for h in _HON_MULTI) or _rejected(surname + given, surname + given, hon):
+        if given.startswith(_HON_MULTI) or _rejected(surname + given, surname + given, hon):
             return
         add(ws, g_end, [_SCORE_SPACED] + ([_SCORE_LABEL[label[0]]] if by_label else []))
 
@@ -525,26 +748,121 @@ sunday jan feb mar apr may jun jul aug sep sept oct nov dec january february mar
 august september october november december am pm normal negative positive left right bilateral
 dob mrn ssn rrn dx ddx hx rx tx sx fx hpi pmh psh fh ros pe cc bp hr rr bt spo2 bmi ecg ekg ct mri
 cbc cmp lft tft er icu opd ipd gp md rn np pa phd do od os ou po iv im sc prn qd bid tid qid
+alert afebrile denies denied stable unstable cooperative oriented awake drowsy confused improved worse
+better charge night day evening shift attending rounds on-call call duty consultant consult
+cardiology pharmacy nursing surgery pediatrics orthopedics psychiatry radiology neurology clinic ward
+mother father spouse wife husband son daughter brother sister parent parents guardian caregiver self
+friend partner relative complete blood count hemoglobin glucose smoker nonsmoker drinker reg
+registration chart record medication medications drug drugs tablet tablets dose brand generic
+dear sincerely regards thanks thank best kind warm cheers subject re cc attn from
+electronic electronically digital digitally
+is was are were be been has have had will would can could should might must did does also then
+this that these those who which what when where why how it he she they we you him her them his
+its our their my your not but if as all any some
 """.split())
+# Medical specialties, procedures and conditions by their ending ("Cardiology", "Hepatitis").
+_EN_STOP_SUFFIXES = ("ology", "ologist", "iatry", "iatric", "iatrics", "pedics", "ectomy", "otomy",
+                     "itis", "osis", "emia", "algia", "pathy", "scopy", "graphy")
 
-_EN_TOKEN = r"(?:[A-Z](?:'[A-Z])?[a-z]+(?:[A-Z][a-z]+)?(?:-[A-Z][a-z]+)?|[A-Z]{2,}(?:-[A-Z]{2,})?|[A-Z]\.)"
+_EN_TOKEN = r"(?:[A-Z](?:'[A-Z])?[a-z]+(?:[A-Z][a-z]+)?(?:-[A-Z]?[a-z]+)?|[A-Z]{2,}(?:-[A-Z]{2,})?|[A-Z]\.)"
 _EN_TOKEN_RE = re.compile(_EN_TOKEN)
 _TITLE_RE = re.compile(
     rf"\b(?:Mr|Mrs|Ms|Miss|Mx|Dr|Prof|Professor|Sir|Dame)\b\.?[ \t]+(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{0,2}})"
 )
+# Label + value. A comma may only follow the first token ("KIM, MINJUN" surname-first), so
+# "Daniel Whitford, Smoker" and "Daniel Whitford, Reg No ..." stop at the comma.
 _EN_LABEL_RE = re.compile(
-    r"(?<![A-Za-z])(?:(?i:patient(?:'s)?[ \t]+name|full[ \t]+name|name|patient|pt|guardian|physician"
-    r"|doctor|attending|surgeon|nurse|signed[ \t]+by|referred[ \t]+by|prepared[ \t]+by|author"
-    r"|emergency[ \t]+contact|contact[ \t]+person)|이름|성명|성함|환자명|보호자)"
-    rf"[ \t]*[:：][ \t]*(?P<n>{_EN_TOKEN}(?:,?[ \t]+{_EN_TOKEN}){{0,3}})"
+    r"(?<![A-Za-z])(?P<lab>(?i:patient(?:'s)?[ \t]+name|full[ \t]+name|name|patient|pt|guardian|physician"
+    r"|doctor|attending|surgeon|nurse|signed[ \t]+by|referred[ \t]+by|prepared[ \t]+by|author|resident"
+    r"|referring[ \t]+physician|emergency[ \t]+contact|contact[ \t]+person)|이름|성명|성함|환자명|보호자)"
+    rf"[ \t]*[:：][ \t]*(?P<n>{_EN_TOKEN}(?:,?[ \t]+{_EN_TOKEN})?(?:[ \t]+{_EN_TOKEN}){{0,2}})"
+)
+# Labels whose value is often a status word ("Pt: Alert", "Patient: Denies ..."): one token
+# alone must look like a surname, be in capitals, or be followed by age / sex / DOB.
+_EN_STRICT_LABELS = frozenset({"name", "full name", "patient name", "patient's name", "patient", "pt", "nurse"})
+_NAME_QUALIFIERS = frozenset({"patient", "patient's", "full", "first", "last", "given", "family", "middle",
+                              "maiden", "legal", "guardian", "guardian's", "contact", "caller", "member",
+                              "insured", "subscriber", "applicant", "spouse", "mother's", "father's"})
+_EN_DEMOGRAPHIC_AFTER = re.compile(
+    r",?[ \t]*(?:\d{1,3}[ ]?(?:[MF]\b|y/?o\b|yo\b|yrs?\b|세)|[MF][ ]?/[ ]?\d|\(|DOB\b|D\.O\.B|born\b|age\b|aged\b)")
+ROMAN_SURNAMES = frozenset("""
+Kim Lee Yi Rhee Park Pak Choi Choe Jung Jeong Chung Kang Cho Jo Yoon Yun Jang Chang Lim Im Han Oh Seo Suh
+Shin Sin Kwon Hwang Ahn An Song Jeon Jun Chun Hong Yoo Yu Ko Go Moon Mun Yang Son Sohn Bae Baek Paik Huh
+Heo Nam Shim Sim Noh Roh Ha Kwak Sung Seong Cha Joo Ju Woo Koo Gu Na Min Jin Ji Um Eom Chae Won Cheon Bang
+Gong Hyun Ham Byun Byeon Yeom Yeo Choo Chu Do Doh So Seok Sun Seon Sul Seol Ma Gil Yeon Wi Pyo Myung
+Myeong Ki Ban Ra Wang Geum Ok Yook Yuk In Maeng Je Mo Tak Kook Guk Uh Eo Eun Pyun Pyeon Yong Ye Kyung
+Gyeong Bong Sa Boo Bu Ka Bok Tae Mok Hyung Pi Doo Kam Gam Ho Eum Bin Dong On Si Beom Jwa Paeng Seung
+Sang Kal Dan Gyeon Hwa Ryu Ryoo Dang Namgung Hwangbo Jegal Sunwoo Seonu Dokgo Sagong Seomun
+""".split())
+_ROMAN_SURNAME_ALT = "|".join(sorted(ROMAN_SURNAMES, key=len, reverse=True))
+# Romanized Korean name: surname + given name; "Park Jae-won", "Lee Joon-ho", "Kang Minseo".
+# (The "not glued to a letter on the left" check is done in code: a leading lookbehind would stop
+# the regex engine from skipping quickly to capital letters.)
+_ROMAN_KO_RE = re.compile(
+    rf"(?P<n>(?:{_ROMAN_SURNAME_ALT})[ \t]+[A-Z][a-z]+(?:-(?P<hy>[A-Za-z])[a-z]+)?)(?![A-Za-z'-])"
+)
+_RELATION_BEFORE = re.compile(
+    r"(?i:\b(?:son|daughter|wife|husband|mother|father|brother|sister|spouse|guardian|caregiver|partner"
+    r"|friend|nephew|niece|grandson|granddaughter|grandmother|grandfather|uncle|aunt|patient|pt|nurse"
+    r"|doctor|physician|colleague|thanks|regards|sincerely|from|by|with|cc)\b[,:]?)[ \t]+\Z"
+)
+_DEGREE = r"(?:MD|M\.D\.|PhD|Ph\.D\.|RN|DO|NP|PA-C|FRCPC?|FACP|FACS|MBBS|DDS|DMD|PharmD|MPH|GP)"
+_DEGREE_AFTER = re.compile(rf",?[ \t]*(?:{_DEGREE}(?![A-Za-z])|\([ \t]*{_DEGREE}[ \t]*\))")
+# Signature / letter names: "Rebecca Thornwell, MD", "Sincerely, Alan Fischer", "Re: Margaret O'Donnell, DOB".
+_EN_DEGREE_RE = re.compile(
+    rf"(?<![A-Za-z'-])(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,3}}),?[ \t]+{_DEGREE}(?![A-Za-z])"
+)
+_EN_CLOSING_RE = re.compile(
+    r"(?<![A-Za-z])(?i:sincerely|regards|thanks|thank[ \t]+you|best|cheers|yours[ \t]+truly|dear|from|attn|cc)"
+    rf"[,:]?[ \t]*(?:\r?\n[ \t]*){{0,2}}(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,3}})"
+)
+_EN_RE_LINE = re.compile(rf"(?<![A-Za-z])(?:Re|RE|Subject|SUBJECT)[ \t]*:[ \t]*(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,3}})")
+_RE_LINE_END = re.compile(
+    r"[ \t]*,?[ \t]*(?:DOB\b|D\.O\.B|MRN\b|born\b|age\b|aged\b|\(|\d{1,3}[ ]?(?:y|yo|yrs?|[MF])\b)")
+# A Latin-script name after a Korean label or family word: "환자 Nguyen Thi Lan", "남편 Tran Van Minh".
+_KO_LABEL_LATIN_RE = re.compile(
+    r"(?<![가-힣])(?:환자|보호자|남편|아내|부인|배우자|아들|딸|모친|부친|어머니|아버지|통역사?|성명|이름|성함|환자명"
+    r"|보호자명|예금주|신청인|작성자|며느리|사위|손녀|손자|동생|언니|오빠|누나|형|친구|보낸[ ]?사람|받는[ ]?사람"
+    r"|발신인?|수신인?|발신자|수신자)"
+    rf"[ \t]*[:：]?[ \t]*[\"'“‘]?(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,3}})"
+)
+# "Her daughter, Siobhan, can be reached", "His wife Linda (cell ...)": a possessive + family word.
+_EN_RELATION_NAME_RE = re.compile(
+    r"(?i:\b(?:his|her|their|my|your|patient's|pt's|the[ \t]+patient's)[ \t]+(?:wife|husband|son|daughter"
+    r"|mother|father|brother|sister|spouse|partner|fianc[eé]e?|boyfriend|girlfriend|grandson|granddaughter"
+    r"|niece|nephew|caregiver|guardian|friend))"
+    rf",?[ \t]+(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN})?)(?![A-Za-z])"
+)
+# Vietnamese names (foreign patients and interpreters): "Nguyen Thi Lan", "Tran Van Minh".
+_VIET_RE = re.compile(
+    r"(?<![A-Za-z])(?P<n>(?:Nguyen|Tran|Le|Pham|Hoang|Huynh|Phan|Vu|Vo|Dang|Bui|Do|Ho|Ngo|Duong|Ly|Truong"
+    r"|Dinh|Lam|Mai|Trinh|Dao|Cao|Ha|Ta|Luong|Quach)[ \t]+(?:Thi|Van|Duc|Thanh|Ngoc|Minh|Hong|Quoc|Huu|Xuan"
+    r"|Kim|Thu|Anh|Hoang|Gia|Bao)(?:[ \t]+[A-Z][a-z]+){1,2})(?![A-Za-z])"
+)
+# Romanized name in parentheses after a Hangul name: "강민서 (Kang Minseo)".
+_HANGUL_PAREN_LATIN_RE = re.compile(
+    rf"(?<![가-힣])(?P<ko>[가-힣]{{2,4}})[ ]?[(（][ ]*(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,2}})[ ]*[)）]"
 )
 
 
-def _trim_en(text: str, s: int, e: int) -> tuple[int, int] | None:
-    """Cut a captured name at the first stopword; drop trailing initials."""
+_HAS_UPPER = re.compile(r"[A-Z]")
+
+
+def _en_stop(token: str) -> bool:
+    t = token.rstrip(".").lower()
+    return t in EN_STOPWORDS or (len(t) > 5 and t.endswith(_EN_STOP_SUFFIXES))
+
+
+def _trim_en(text: str, s: int, e: int, skip_leading: bool = False) -> tuple[int, int] | None:
+    """Cut a captured name at the first stopword; drop trailing initials.
+
+    `skip_leading`: stopwords before the name are skipped first ("Kind Regards Emily Stone").
+    """
     toks = []
     for t in _EN_TOKEN_RE.finditer(text, s, e):
-        if t.group().rstrip(".").lower() in EN_STOPWORDS:
+        if _en_stop(t.group()):
+            if skip_leading and not toks:
+                continue
             break
         toks.append(t)
     while toks and toks[-1].group().endswith("."):
@@ -554,19 +872,85 @@ def _trim_en(text: str, s: int, e: int) -> tuple[int, int] | None:
     return toks[0].start(), toks[-1].end()
 
 
+def _token_count(text: str, rng: tuple[int, int]) -> int:
+    return sum(1 for t in _EN_TOKEN_RE.finditer(text, rng[0], rng[1]) if not t.group().endswith("."))
+
+
 class EnglishNameRecognizer:
-    """English names after titles (Dr., Mr.) or labels (Name:, Patient:), plus Latin cfg.names."""
+    """English / romanized names after titles, labels, letter closings or Korean labels, names
+    with a degree ("..., MD"), romanized Korean and Vietnamese names, plus Latin cfg.names."""
 
     name = "names_en"
     entities = (PERSON,)
 
     def find(self, text: str, cfg: "Config") -> list[Span]:
+        if not _HAS_UPPER.search(text):  # every rule needs a capital letter
+            return _finish(text, {}, _dict_spans(text, cfg, hangul=False), cfg, self.name)
         hits: dict[tuple[int, int], list[float]] = {}
-        for rx in (_TITLE_RE, _EN_LABEL_RE):
+
+        def hit(rng: tuple[int, int] | None) -> None:
+            if rng:
+                hits.setdefault(rng, []).append(0.85)
+
+        surnames: set[str] = set()
+        for m in _TITLE_RE.finditer(text):
+            rng = _trim_en(text, m.start("n"), m.end("n"))
+            hit(rng)
+            if rng and _token_count(text, rng) == 1:
+                surnames.add(text[rng[0]:rng[1]])
+        for m in _EN_LABEL_RE.finditer(text):
+            if not self._label_ok(text, m):
+                continue
+            rng = _trim_en(text, m.start("n"), m.end("n"))
+            if rng and _token_count(text, rng) == 1 and m.group("lab").lower() in _EN_STRICT_LABELS:
+                tok = text[rng[0]:rng[1]]
+                if not (tok in ROMAN_SURNAMES or tok.isupper()
+                        or _EN_DEMOGRAPHIC_AFTER.match(text, rng[1])):
+                    continue  # "Pt: Alert, cooperative", "Test Name: Hemoglobin"
+            hit(rng)
+        for rx in (_EN_DEGREE_RE, _EN_CLOSING_RE, _KO_LABEL_LATIN_RE):
             for m in rx.finditer(text):
-                rng = _trim_en(text, m.start("n"), m.end("n"))
-                if rng:
-                    hits.setdefault(rng, []).append(0.85)
+                rng = _trim_en(text, m.start("n"), m.end("n"), skip_leading=True)
+                if rx is _EN_DEGREE_RE and rng and rng[1] != m.end("n"):
+                    continue  # "Johnson Smith Hospital, MD": the degree must follow the name itself
+                if rng and _token_count(text, rng) >= 2:
+                    hit(rng)
+        for m in _EN_RELATION_NAME_RE.finditer(text):
+            hit(_trim_en(text, m.start("n"), m.end("n")))
+        for m in _EN_RE_LINE.finditer(text):
+            rng = _trim_en(text, m.start("n"), m.end("n"))
+            if rng and _token_count(text, rng) >= 2 and _RE_LINE_END.match(text, rng[1]):
+                hit(rng)
+        for m in _ROMAN_KO_RE.finditer(text):
+            s, e = m.span("n")
+            if s > 0 and (text[s - 1].isascii() and text[s - 1].isalpha() or text[s - 1] in "'-"):
+                continue
+            if (m.group("hy") or _RELATION_BEFORE.search(text, max(0, s - 25), s)
+                    or _DEGREE_AFTER.match(text, e)):
+                hit((s, e))
+        for m in _VIET_RE.finditer(text):
+            hit(m.span("n"))
+        for m in _HANGUL_PAREN_LATIN_RE.finditer(text):
+            ko = m.group("ko")
+            if not (ko[0] in SURNAMES1 or ko[:2] in SURNAMES2):
+                continue
+            toks = m.group("n").split()
+            if any(t in ROMAN_SURNAMES for t in toks):
+                hit(m.span("n"))
+        for surname in surnames:  # "Mr. Merriweather" ... "John A. Merriweather"
+            for m in re.finditer(rf"(?<![A-Za-z])(?P<pre>(?:[A-Z][a-z]+[ \t]+)?(?:[A-Z]\.[ \t]+)?)"
+                                 rf"{re.escape(surname)}(?![A-Za-z])", text):
+                pre = m.group("pre")
+                if pre and not any(_en_stop(t) for t in pre.split()):
+                    hit(m.span())
         for k in hits:
             hits[k] = [max(hits[k])]
         return _finish(text, hits, _dict_spans(text, cfg, hangul=False), cfg, self.name)
+
+    @staticmethod
+    def _label_ok(text: str, m: re.Match) -> bool:
+        """'<qualifier> name:' is a person label only for person qualifiers (not 'Drug name:')."""
+        if m.group("lab").lower() != "name":
+            return True
+        before = re.search(r"([A-Za-z']+)[ \t]+\Z", text[max(0, m.start() - 25):m.start()])
+        return before is None or before.group(1).lower() in _NAME_QUALIFIERS
