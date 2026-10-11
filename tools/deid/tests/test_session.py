@@ -82,7 +82,7 @@ def test_expiry_starts_fresh(home):
     v.token_for("PERSON", "김민준", "이름")
     session.save_session_vault(v)
     meta = json.loads(session.meta_file().read_text())
-    meta["created"] = time.time() - 13 * 3600
+    meta["created"] = meta["last_used"] = time.time() - 13 * 3600   # unused for 13 hours
     session.meta_file().write_text(json.dumps(meta))
     assert len(session.load_session_vault()) == 0
     assert not session.vault_file().exists()
@@ -92,10 +92,11 @@ def test_expiry_configurable(home, monkeypatch):
     v = Vault()
     v.token_for("PERSON", "이서연", "이름")
     session.save_session_vault(v)
-    meta = {"created": time.time() - 2 * 3600}
+    meta = {"created": time.time() - 2 * 3600}    # deid 0.1 meta: no last_used
     session.meta_file().write_text(json.dumps(meta))
     monkeypatch.setenv("DEID_SESSION_HOURS", "3")
     assert len(session.load_session_vault()) == 1
+    session.meta_file().write_text(json.dumps(meta))   # (that load counted as a use)
     monkeypatch.setenv("DEID_SESSION_HOURS", "1")
     assert len(session.load_session_vault()) == 0
 

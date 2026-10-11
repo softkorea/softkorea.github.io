@@ -105,31 +105,207 @@ def _first_line(e: BaseException) -> str:
     return text.splitlines()[0][:400] if text else type(e).__name__
 
 
+# ---------------------------------------------------------------------- version
+
+
+def _git_head(root: Path) -> tuple[str, str] | None:
+    """(commit, branch) of the git checkout at `root`, read from the files in .git (no git
+    command: on a Mac without developer tools that would open an install dialog)."""
+    git = root / ".git"
+    if git.is_file():     # worktree / submodule: "gitdir: <path>"
+        line = git.read_text("utf-8", "replace").strip()
+        if not line.startswith("gitdir:"):
+            return None
+        git = (root / line.split(":", 1)[1].strip()).resolve()
+    if not git.is_dir():
+        return None
+    head = (git / "HEAD").read_text("utf-8", "replace").strip()
+    if not head.startswith("ref:"):
+        return (head[:40], "") if re.fullmatch(r"[0-9a-f]{40,64}", head) else None
+    ref = head.split(":", 1)[1].strip()
+    common = git
+    if (git / "commondir").is_file():
+        common = (git / (git / "commondir").read_text("utf-8", "replace").strip()).resolve()
+    branch = ref.removeprefix("refs/heads/")
+    for base in dict.fromkeys((git, common)):
+        f = base / ref
+        if f.is_file():
+            sha = f.read_text("utf-8", "replace").strip()
+            if re.fullmatch(r"[0-9a-f]{40,64}", sha):
+                return sha, branch
+    for base in dict.fromkeys((git, common)):
+        packed = base / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text("utf-8", "replace").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[1] == ref and re.fullmatch(r"[0-9a-f]{40,64}", parts[0]):
+                    return parts[0], branch
+    return None
+
+
+def _source_checkout() -> Path | None:
+    """The source folder (tools/deid) when deid runs from it (editable install or PYTHONPATH),
+    else None. An installed copy in site-packages never counts, even when a folder above it
+    happens to be a git repository."""
+    pkg = Path(__file__).resolve().parent
+    if pkg.parent.name != "src" or not (pkg.parent.parent / "pyproject.toml").is_file():
+        return None
+    return pkg.parent.parent
+
+
+def _strip_userinfo(url: str) -> str:
+    """A URL without "user:token@" (pip records the URL exactly as typed)."""
+    return re.sub(r"(?<=://)[^/@\s]*@", "", url)
+
+
+def build_info() -> str:
+    """Where this deid comes from, for `deid --version` and `deid doctor`: the git commit when
+    running from a git checkout, else what pip recorded at install time (git commit and URL,
+    or the folder), else the install folder. Best effort: never raises."""
+    try:
+        src = _source_checkout()
+        if src is not None:
+            for d in (src, *src.parents):
+                if (d / ".git").exists():
+                    head = _git_head(d)
+                    if head:
+                        sha, branch = head
+                        return (f"git {sha[:7]}" + (f", 브랜치 {branch}" if branch else "")
+                                + f", 소스 폴더 {src}")
+                    break
+            return f"소스 폴더 {src}"
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from importlib import metadata
+
+        dist = metadata.distribution("deid-kit")
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            info = json.loads(raw)
+            url = _strip_userinfo(str(info.get("url", "")))
+            sub = (info.get("subdirectory") or "").strip("/")
+            where = url + (f"#subdirectory={sub}" if sub else "")
+            vcs = info.get("vcs_info") or {}
+            if vcs.get("commit_id"):
+                return f"git {str(vcs['commit_id'])[:7]}, 설치 원본 {where}"
+            if url.startswith("file://"):
+                from urllib.parse import unquote, urlsplit
+
+                folder = unquote(urlsplit(url).path)
+                if (info.get("dir_info") or {}).get("editable"):
+                    return f"편집 가능 설치 폴더 {folder}"
+                # a folder install has no commit: the install time shows that an update took
+                return f"설치 원본 폴더 {folder}" + _installed_at(dist)
+            if where:
+                return f"설치 원본 {where}"
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return f"설치 위치 {Path(__file__).resolve().parent}"
+    except Exception:  # noqa: BLE001  # pragma: no cover
+        return "설치 정보 없음"
+
+
+def _installed_at(dist: object) -> str:
+    """", 설치 YYYY-MM-DD HH:MM" from the time pip wrote direct_url.json; "" when unknown."""
+    try:
+        path = getattr(dist, "_path", None)
+        if path is None:
+            return ""
+        import time
+
+        mtime = (Path(path) / "direct_url.json").stat().st_mtime
+        return ", 설치 " + time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def version_text() -> str:
+    return f"deid {__version__} ({build_info()})"
+
+
+class _VersionAction(argparse.Action):
+    """--version, computed only when asked (build_info reads files)."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS,
+                 help=None):  # noqa: A002, ANN001
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0,
+                         help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+        parser._print_message(version_text() + "\n", sys.stdout)
+        parser.exit()
+
+
 # ---------------------------------------------------------------------- shared helpers
 
 
-def _load_cfg(path: str | None) -> "Config":
-    from .config import load_config
+CONFIG_FIX_HINT = ("설정 파일을 고친 뒤 'deid doctor'로 확인하세요. 처음부터 다시 만들려면 "
+                   "'deid init-config --force' (fix the file, then run 'deid doctor')")
 
+
+def _load_cfg(path: str | None) -> "Config":
+    """The settings for a command. A config file that does not load stops the command with
+    its full (Korean) message and exit code 2 - never a traceback, never silently ignored."""
+    from .config import load_config
+    from .watch import config_error_text, config_location
+
+    where, _ = config_location(path)
     try:
         return load_config(path)
     except FileNotFoundError as e:
-        raise CliError(f"설정 파일을 찾을 수 없습니다 (config file not found): {path}") from e
-    except Exception as e:  # noqa: BLE001 - TOML syntax, invalid action ...
-        raise CliError(f"설정 파일 오류 (config error): {_first_line(e)}") from e
+        raise CliError(f"설정 파일을 찾을 수 없습니다 (config file not found): {where}") from e
+    except Exception as e:  # noqa: BLE001 - TOML syntax, unknown key or entity, bad action ...
+        raise CliError(f"설정 파일 오류 (config error): {where}\n  {config_error_text(e, where)}"
+                       f"\n  -> {CONFIG_FIX_HINT}") from e
+
+
+def _live_cfg(path: str | None):
+    """Settings for the long-running commands (watch, serve): loaded now (a bad file stops the
+    command), then re-read whenever the file changes."""
+    from .watch import LiveConfig
+
+    return LiveConfig(path, _load_cfg(path))
+
+
+NO_TTY_PASS_ERROR = (
+    "보관함 파일(--vault)의 암호를 물어볼 터미널 창이 없습니다. 터미널 앱에서 직접 실행하거나, "
+    "빠른 동작·단축어·자동 실행에서는 DEID_VAULT_PASS 환경변수에 암호를 넣어 실행하세요 "
+    "(예: DEID_VAULT_PASS='암호' deid restore --vault ~/deid.vault). 암호를 잊으면 그 보관함으로는 "
+    "복원할 수 없습니다 (no terminal to ask for the vault passphrase: run it in Terminal or set "
+    "DEID_VAULT_PASS)")
+
+
+def _isatty(stream: object) -> bool:
+    try:
+        return bool(stream.isatty())      # type: ignore[attr-defined]
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _can_prompt() -> bool:
+    """True when a passphrase can be asked for: stdin is the terminal, or it is redirected
+    ('deid text --restore --vault v < 답변.txt') while the command still runs in a terminal
+    window - getpass then asks on /dev/tty. Never from Automator, Shortcuts or launchd."""
+    if _isatty(sys.stdin):
+        return True
+    if not _isatty(sys.stderr):
+        return False
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | getattr(os, "O_NOCTTY", 0))
+    except OSError:
+        return False
+    os.close(fd)
+    return True
 
 
 def _passphrase(confirm: bool) -> str:
     env = os.environ.get("DEID_VAULT_PASS")
     if env:
         return env
-    try:
-        interactive = sys.stdin.isatty()
-    except (AttributeError, ValueError, OSError):
-        interactive = False
-    if not interactive:
-        raise CliError("보관함 암호를 입력받을 수 없습니다. DEID_VAULT_PASS 환경변수로 지정하세요 "
-                       "(no terminal for the vault passphrase: set DEID_VAULT_PASS)")
+    if not _can_prompt():
+        raise CliError(NO_TTY_PASS_ERROR)
     pw = getpass.getpass("보관함 암호 (vault passphrase): ")
     if not pw:
         raise CliError("암호가 비어 있습니다 (empty passphrase)")
@@ -152,7 +328,7 @@ def _load_file_vault(path: str, create: bool) -> tuple["Vault", str]:
         except OSError as e:
             raise CliError(f"보관함 파일을 읽을 수 없습니다 (cannot read vault): {_first_line(e)}") from e
     if not create:
-        raise CliError("보관함 파일이 없습니다 (vault file not found)")
+        raise CliError(f"보관함 파일이 없습니다 (vault file not found): {p}")
     return Vault(), _passphrase(confirm=True)
 
 
@@ -430,7 +606,11 @@ def cmd_text(args: argparse.Namespace) -> int:
     from .formats.text import deid_text
 
     with _vault_scope(args.vault) as vault:
-        out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
+        try:
+            out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
+        except RuntimeError as e:  # e.g. a [ner] backend that is not installed: no output at all
+            raise CliError(f"비식별화하지 못했습니다 - 아무것도 출력하지 않았습니다 (failed; nothing "
+                           f"written): {e}\n  -> 'deid doctor'로 확인하세요 (run 'deid doctor')") from e
     _write_stdout(out)
     if not args.quiet:
         _err(f"비식별화 (de-identified): {_summary(report, cfg)}")
@@ -534,7 +714,20 @@ def cmd_clip(args: argparse.Namespace) -> int:
 def cmd_restore(args: argparse.Namespace) -> int:
     if not mac.is_macos():
         raise CliError("'deid restore'는 macOS 클립보드용입니다. 다른 환경에서는 "
-                       "'deid text --restore < 답변.txt'를 사용하세요 (macOS only; use 'deid text --restore')")
+                       "'deid text --restore < 답변.txt' (보관함 파일이면 'deid text --restore --vault "
+                       "파일 < 답변.txt')를 사용하세요 (macOS only; use 'deid text --restore')")
+    try:
+        return _restore_clipboard(args)
+    except CliError as e:
+        # From a Quick Action or Shortcut nobody sees stderr: say it in a notification (no
+        # file names or values - the message is one of ours).
+        _notify(args.notify, "deid 복원 실패",
+                "보관함 암호가 필요합니다 - 터미널에서 실행하거나 DEID_VAULT_PASS를 지정하세요"
+                if e.message == NO_TTY_PASS_ERROR else "복원하지 못했습니다 - 터미널에서 확인하세요")
+        raise
+
+
+def _restore_clipboard(args: argparse.Namespace) -> int:
     cfg = _load_cfg(args.config)
     from .session import count_tokens, unknown_tokens
 
@@ -544,9 +737,13 @@ def cmd_restore(args: argparse.Namespace) -> int:
         return EXIT_NOTHING
     with _vault_scope(args.vault, save=False, create=False) as vault:
         if not len(vault):
-            _err("복원할 정보가 없습니다. 세션이 만료(기본 12시간)되었거나 삭제되었습니다 "
-                 "(no session tokens: expired or forgotten)")
-            _notify(args.notify, "deid 복원", "복원할 세션 정보가 없습니다")
+            if args.vault:
+                _err("보관함 파일에 가명이 없습니다 (the vault file holds no tokens)")
+            else:
+                _err("복원할 정보가 없습니다. 세션이 만료(마지막 사용 후 기본 12시간)되었거나 "
+                     "삭제되었습니다. 파일을 --vault로 비식별화했다면 'deid restore --vault 파일'을 "
+                     "쓰세요 (no session tokens: expired or forgotten)")
+            _notify(args.notify, "deid 복원", "복원할 가명 정보가 없습니다")
             return EXIT_NOTHING
         in_links = vault.tokens_in_links(text)
         n = count_tokens(text, vault) - in_links
@@ -651,16 +848,14 @@ def cmd_shot(args: argparse.Namespace) -> int:
 def cmd_watch(args: argparse.Namespace) -> int:
     from .watch import run_watch
 
-    cfg = _load_cfg(args.config)
-    return run_watch(args.in_dir, args.out_dir, interval=args.interval, cfg=cfg,
-                     notify=args.notify)
+    return run_watch(args.in_dir, args.out_dir, interval=args.interval,
+                     cfg=_live_cfg(args.config), notify=args.notify)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
-    cfg = _load_cfg(args.config)
-    return serve(args.port, open_browser=not args.no_browser, cfg=cfg)
+    return serve(args.port, open_browser=not args.no_browser, cfg=_live_cfg(args.config))
 
 
 def _deid_command() -> str | list[str]:
@@ -688,6 +883,9 @@ def cmd_install_watch(args: argparse.Namespace) -> int:
              "설치된 자동 감시가 없습니다 (no watch agent installed)")
         return EXIT_OK
     mac.require_macos("deid install-watch")
+    # The agent reads the default config file: one that does not load would stop it at every
+    # start (launchd retries every 30 s), so refuse now with the reason.
+    _load_cfg(None)
     prepare_work_dir(in_dir)    # owner-only (0700): other accounts must not read originals
     prepare_work_dir(out_dir)
     path = mac.install_watch_agent(plist)
@@ -695,7 +893,9 @@ def cmd_install_watch(args: argparse.Namespace) -> int:
     _out(f"  넣는 곳 (in):  {in_dir}")
     _out(f"  결과 (out):    {out_dir}")
     _out(f"  기록 (log):    {mac.default_watch_log()}")
-    _out("로그인할 때마다 자동으로 시작됩니다. 제거: deid install-watch --uninstall")
+    _out("로그인할 때마다 자동으로 시작됩니다. 설정 파일을 고치면 곧바로 다시 읽습니다. deid를 "
+         "업데이트한 뒤에는 이 명령을 한 번 더 실행해 새 버전으로 다시 시작하세요. "
+         "제거: deid install-watch --uninstall")
     return EXIT_OK
 
 
@@ -835,11 +1035,17 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_forget(args: argparse.Namespace) -> int:
-    from .session import forget_session
+    from .session import data_dir, forget_session_items
 
-    removed = forget_session()
-    _out("세션 보관함과 키를 삭제했습니다 (session vault and key deleted)" if removed else
-         "삭제할 세션 정보가 없습니다 (nothing to delete)")
+    removed = forget_session_items(describe=True)
+    if not removed:
+        _out(f"삭제할 세션 정보가 없습니다 (nothing to delete): {data_dir()}")
+        return EXIT_OK
+    _out("세션 보관함과 키를 삭제했습니다 (session vault and key deleted):")
+    for item in removed:
+        _out(f"  - {item}")
+    _out("이제 그 전에 만든 [이름1] 같은 가명은 복원할 수 없습니다. --vault 보관함 파일과 결과 파일"
+         "(deid_out 등)은 지우지 않았습니다 (vault files and outputs are not touched)")
     return EXIT_OK
 
 
@@ -876,11 +1082,63 @@ class _Doctor:
             _out(f"       -> {hint}")
 
 
+def _config_problems(path: Path) -> list[str]:
+    """deid.config.validate_report(path) when this deid has it (errors first, then softer
+    problems such as names = [...] that ended up inside the [ner] table); else []."""
+    try:
+        from . import config as config_mod
+
+        report = getattr(config_mod, "validate_report", None)
+        return [str(p) for p in report(path)] if report else []
+    except Exception as e:  # noqa: BLE001 - the check itself must not break doctor
+        return [_first_line(e)]
+
+
+def _doctor_config(doc: "_Doctor", cfg_path: Path) -> "Config | None":
+    """Config section of `deid doctor`: [XX] when the file does not load (every command stops
+    with that message), [!!] for every other problem validate_report finds."""
+    from .config import load_config
+    from .watch import config_error_text
+
+    error = None
+    cfg = None
+    try:
+        cfg = load_config(cfg_path)
+    except Exception as e:  # noqa: BLE001
+        error = config_error_text(e, cfg_path)
+    problems = _config_problems(cfg_path)
+    if error is not None:
+        doc.item("fail", "설정 파일 (config)", f"{cfg_path}: {error}",
+                 "이 오류를 고칠 때까지 모든 deid 명령이 멈춥니다. 파일 내용을 고치거나 "
+                 "deid init-config --force로 예시를 다시 만드세요")
+    else:
+        doc.item("warn" if problems else "ok", "설정 파일 (config)",
+                 f"{cfg_path} 읽음 (loaded)" + (f" - 확인할 점 {len(problems)}개" if problems else ""))
+    shown = " ".join((error or "").split())
+    for p in problems:
+        flat = " ".join(p.split())
+        if shown and (flat == shown or flat in shown or shown in flat):
+            continue     # already shown above
+        doc.item("warn", "설정 파일 확인 필요 (config warning)", p)
+    if cfg is not None:
+        try:
+            _column_types(None, cfg)
+        except CliError as e:
+            doc.item("fail", "설정 파일 [columns]", e.message,
+                     "열 유형은 PERSON, PHONE, RRN 같은 항목 이름이나 skip, text 입니다")
+        if cfg.names:
+            doc.item("info", "설정 파일 names", f"항상 가릴 이름 {len(cfg.names)}개 (names: {len(cfg.names)})")
+    return cfg
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     import importlib.util
 
     doc = _Doctor()
     _out(f"deid {__version__} 환경 점검 (environment check)")
+    doc.item("ok", "deid 버전 (version)", f"{__version__} - {build_info()}",
+             "업데이트 뒤 이 버전/커밋이 바뀌었는지 확인하세요 (자동 감시: deid install-watch 다시 "
+             "실행, deid serve: 다시 시작)")
     v = sys.version_info
     doc.item("ok" if v >= (3, 10) else "fail", "Python", f"{v.major}.{v.minor}.{v.micro} "
              f"({sys.executable})", "" if v >= (3, 10) else "Python 3.10 이상이 필요합니다: "
@@ -948,20 +1206,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     cfg_path = _config_path()
     cfg = None
     if cfg_path.exists():
-        try:
-            from .config import load_config
-            cfg = load_config(cfg_path)
-            doc.item("ok", "설정 파일 (config)", f"{cfg_path} 읽음 (loaded)")
-            try:
-                _column_types(None, cfg)
-            except CliError as e:
-                doc.item("fail", "설정 파일 [columns]", e.message,
-                         "열 유형은 PERSON, PHONE, RRN 같은 항목 이름이나 skip, text 입니다")
-        except Exception as e:  # noqa: BLE001
-            doc.item("fail", "설정 파일 (config)", f"{cfg_path}: {_first_line(e)}",
-                     "파일 내용을 고치거나 deid init-config --force로 예시를 다시 만드세요")
+        cfg = _doctor_config(doc, cfg_path)
     else:
-        doc.item("info", "설정 파일 (config)", f"{cfg_path} 없음 - 기본 설정 사용",
+        doc.item("fail" if os.environ.get("DEID_CONFIG") else "info", "설정 파일 (config)",
+                 f"{cfg_path} 없음 - " + ("DEID_CONFIG가 없는 파일을 가리킵니다. 모든 명령이 멈춥니다"
+                                         if os.environ.get("DEID_CONFIG") else "기본 설정 사용"),
                  "deid init-config 로 예시 설정 파일을 만들 수 있습니다")
     if cfg is None:
         from .config import default_config
@@ -995,7 +1244,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # Folders / session
     from .session import (data_dir, key_location, keychain_problem, loose_permissions,
-                          purge_expired_session, session_age_hours, user_dir, vault_file)
+                          purge_expired_session, session_age_hours, session_hours,
+                          session_idle_hours, user_dir, vault_file)
 
     ud = user_dir()
     if ud.exists():
@@ -1014,10 +1264,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                  f"{ud.parent}에 쓸 수 없습니다")
     purged = purge_expired_session()
     age = session_age_hours() if vault_file().exists() else None
+    idle = session_idle_hours() if vault_file().exists() else None
+    hours = session_hours()
+    if age is not None and idle is not None:
+        state = (f"{age:.1f}시간 전 시작, 마지막 사용 {idle:.1f}시간 전 - {hours:g}시간 동안 쓰지 "
+                 f"않으면 지움 (약 {max(0.0, hours - idle):.1f}시간 남음)")
+    else:
+        state = "만료되어 키와 함께 지움" if purged else "없음"
     doc.item("info", "세션 보관함 (clipboard session)",
-             f"{data_dir()} - " + (f"{age:.1f}시간 전 시작" if age is not None else
-                                   "만료되어 키와 함께 지움" if purged else "없음") +
-             f", 키: {key_location()}")
+             f"{data_dir()} - {state}, 키: {key_location()}")
     problem = keychain_problem() if vault_file().exists() else None
     if problem:
         doc.item("warn", "세션 키 (Keychain)", problem.split(" (")[0],
@@ -1191,8 +1446,8 @@ def build_parser() -> argparse.ArgumentParser:
                             "(Korean-first local de-identification; nothing leaves this computer).",
                 epilog="사용 예 (examples):\n" + EXAMPLES +
                 "\n\n종료 코드 (exit codes): 0 성공, 1 할 일 없음/의심 항목 있음/취소, 2 오류")
-    p.add_argument("--version", action="version", version=f"deid {__version__}",
-                   help="버전 보기 (show version)")
+    p.add_argument("--version", action=_VersionAction,
+                   help="버전과 설치 원본(git 커밋) 보기 (show version and source)")
     p._positionals.title = "명령 (commands)"
     sub = p.add_subparsers(dest="command", metavar="COMMAND", parser_class=_KoParser,
                            help="아래 명령 중 하나 (자세히: deid COMMAND --help)")
@@ -1239,7 +1494,9 @@ def build_parser() -> argparse.ArgumentParser:
              "있습니다. (de-identify stdin to stdout using the session vault)")
     sp.add_argument("--restore", action="store_true",
                     help="반대로 [이름1] 등을 원래 값으로 복원 (re-identify tokens)")
-    sp.add_argument("--vault", metavar="FILE", help="세션 대신 보관함 파일 사용 (use a vault file)")
+    sp.add_argument("--vault", metavar="FILE",
+                    help="세션 대신 보관함 파일 사용 - 암호를 물어봄, 또는 DEID_VAULT_PASS. 복원: "
+                         "deid text --restore --vault 파일 < 답변.txt (use a vault file)")
     sp.add_argument("-q", "--quiet", action="store_true", help="요약을 출력하지 않음 (no summary)")
     sp.set_defaults(func=cmd_text)
 
@@ -1250,8 +1507,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_clip)
 
     sp = add("restore", "클립보드의 가명을 원래 값으로 복원 (re-identify the clipboard; macOS)",
-             "LLM 답변에 있는 [이름1] 같은 가명을 이 컴퓨터 안에서 원래 값으로 바꿉니다. (macOS)")
-    sp.add_argument("--vault", metavar="FILE", help="세션 대신 보관함 파일 사용 (use a vault file)")
+             "LLM 답변에 있는 [이름1] 같은 가명을 이 컴퓨터 안에서 원래 값으로 바꿉니다. (macOS)",
+             epilog="사용 예 (examples):\n" + _columns([
+                 ("deid restore", "clip/text/serve로 가린 가명 (세션 보관함)"),
+                 ("deid restore --vault ~/deid.vault", "deid file --vault로 가린 가명 (암호를 물어봄)"),
+                 ("deid text --restore --vault ~/deid.vault < 답변.txt", "클립보드 대신 파일 글"),
+             ]) + "\n빠른 동작·단축어에서 --vault를 쓰려면 DEID_VAULT_PASS 환경변수가 필요합니다.")
+    sp.add_argument("--vault", metavar="FILE",
+                    help="세션 대신 보관함 파일 사용 - 암호를 물어봄, 또는 DEID_VAULT_PASS "
+                         "(use a vault file)")
     sp.add_argument("--notify", action="store_true", help="알림 표시 (show a notification)")
     sp.set_defaults(func=cmd_restore)
 
@@ -1295,9 +1559,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("forget", "세션 보관함 삭제 (wipe the clipboard session vault and key)",
              "clip/text/serve가 기억하는 가명 목록(세션 보관함)과 그 키를 지웁니다. 지운 뒤에는 "
-             "그 전에 만든 [이름1] 등을 deid restore로 복원할 수 없습니다. (보관함은 12시간이 지나면 "
-             "키와 함께 저절로 지워집니다: 다음에 deid를 실행할 때, 또는 폴더 감시나 웹 화면이 켜져 "
-             "있으면 곧바로.)", parents=())
+             "그 전에 만든 [이름1] 등을 deid restore로 복원할 수 없습니다. 무엇을 지웠는지 보여줍니다. "
+             "(보관함은 마지막으로 쓴 뒤 12시간 동안 쓰지 않으면 키와 함께 저절로 지워집니다: 다음에 "
+             "deid를 실행할 때, 또는 폴더 감시나 웹 화면이 켜져 있으면 곧바로. 시간 바꾸기: "
+             "DEID_SESSION_HOURS)", parents=())
     sp.set_defaults(func=cmd_forget)
 
     sp = add("doctor", "설치 상태 점검 (environment check)",

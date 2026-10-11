@@ -365,6 +365,82 @@ class UrlRecognizer(_Recognizer):
         return out
 
 
+# Personal values in query strings: "?name=표다은&rrn=7904052345678&tel=01023456789",
+# "?pid=00482917". The kept URL around them is opened by the engine (keep spans are containers),
+# so these values are masked even when no other rule would read them (a bare name, a bare ID).
+_PARAM_KEYS = {
+    E.PERSON: ("name", "fullname", "patient", "patientname", "ptname", "pname", "patname", "patnm",
+               "ptnm", "nm", "custname", "membername", "guardian", "guardianname"),
+    E.RRN: ("rrn", "jumin", "juminno", "juminnum", "juminbunho", "ssn", "residentno", "regno"),
+    E.PHONE: ("tel", "telno", "phone", "phoneno", "phonenumber", "mobile", "mobileno", "hp", "hpno",
+              "cell", "cellphone", "handphone", "contact"),
+    E.MRN: ("pid", "patientid", "patid", "ptid", "ptno", "patientno", "mrn", "chartno", "chartnum",
+            "chartid", "hospno"),
+    E.EMAIL: ("email", "mail", "emailaddr", "emailaddress"),
+    E.BIRTHDATE: ("birth", "birthday", "birthdate", "birthdt", "dob", "bday", "birthymd"),
+}
+_PARAM_ENTITY = {k: ent for ent, keys in _PARAM_KEYS.items() for k in keys}
+# Generic keys ("name=report.pdf") only count with a name-shaped value: Hangul syllables,
+# Latin words joined by +, space or %20, or percent-encoded UTF-8 (Hangul is 3 bytes each).
+_GENERIC_NAME_KEYS = frozenset({"name", "nm", "fullname", "custname", "membername"})
+_PARAM_NAME_VALUE = re.compile(
+    r"[가-힣]{2,5}|[A-Za-z]{2,20}(?:(?:\+|%20|[ ._-])[A-Za-z]{1,20}){0,3}|(?:%[0-9A-Fa-f]{2}){6,15}")
+_PARAM_VALUE_OK = {
+    E.PHONE: lambda v: sum(c.isdigit() for c in v) >= 7,
+    E.RRN: lambda v: sum(c.isdigit() for c in v) >= 6,
+    E.MRN: lambda v: any(c.isdigit() for c in v),
+    E.EMAIL: lambda v: "@" in v or "%40" in v.upper(),
+    E.BIRTHDATE: lambda v: sum(c.isdigit() for c in v) >= 4,
+}
+_PARAM_RX = re.compile(
+    r"(?<=[?&;#])(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,30})=(?P<v>[^&#;\s<>\"'`]{1,200})", _A)
+_PARAM_KEY_SEP = re.compile(r"[_.\-]")
+
+
+def _trim_param_value(v: str) -> str:
+    """Drop trailing punctuation, unbalanced brackets and a particle glued to a non-Hangul value."""
+    while True:
+        before = v
+        v = v.rstrip(_TRAIL_PUNCT)
+        for close, open_ in ((")", "("), ("]", "[")):
+            if v.endswith(close) and v.count(close) > v.count(open_):
+                v = v[:-1]
+        m = _HANGUL_RUN_END.search(v)
+        if m and m.group() in _PARTICLES and m.start() > 0:
+            v = v[:m.start()]
+        if v == before:
+            return v
+
+
+class UrlParamRecognizer(_Recognizer):
+    """Values of personal query parameters (name=, rrn=, jumin=, tel=, phone=, hp=, pid=,
+    patient=, mrn=, email=, birth=, dob= and spelling variants such as patient_name)."""
+
+    name = "url_param"
+    entities = tuple(_PARAM_KEYS)
+
+    def find(self, text: str, cfg: "Config | None" = None) -> list[Span]:
+        if "=" not in text:
+            return []
+        out = []
+        for m in _PARAM_RX.finditer(text):
+            key = _PARAM_KEY_SEP.sub("", m.group("key")).lower()
+            entity = _PARAM_ENTITY.get(key)
+            if entity is None:
+                continue
+            value = _trim_param_value(m.group("v"))
+            if not value:
+                continue
+            if key in _GENERIC_NAME_KEYS and not _PARAM_NAME_VALUE.fullmatch(value):
+                continue   # "?name=report.pdf", "?name=item123"
+            ok = _PARAM_VALUE_OK.get(entity)
+            if ok is not None and not ok(value):
+                continue   # "?contact=us", "?phone=true"
+            start = m.start("v")
+            out.append(self._span(text, start, start + len(value), entity, 0.9))
+        return out
+
+
 # --------------------------------------------------------------------------- CARD
 
 _CARD_RX = re.compile(
@@ -561,8 +637,15 @@ _CTX_BRN = re.compile(
 )
 
 
+# The number's own label right before it: "사업자등록번호 123-45-67890", "사업자 번호: ...".
+_BRN_LABEL_BEFORE = re.compile(
+    r"(?:사업자[ \t]?(?:등록)?[ \t]?번호|\bbrn\b|business[ \t]?reg(?:istration)?\.?[ \t]?(?:no\.?|number))"
+    r"[ \t]*(?:[:：#=][ \t]*)?\Z", _AI)
+
+
 class BrnRecognizer(_Recognizer):
-    """사업자등록번호 123-45-67890 (checksum required; bare digits need context)."""
+    """사업자등록번호 123-45-67890 (checksum required unless the number follows its own label;
+    bare digits need context)."""
 
     name = "kr_brn"
     entities = (E.BRN,)
@@ -573,6 +656,10 @@ class BrnRecognizer(_Recognizer):
         out = []
         for m in _BRN_RX.finditer(text):
             if not V.brn_checksum_ok(m.group()):
+                # a typo or an invented number after its explicit label is still the number
+                if (_BRN_LABEL_BEFORE.search(text, max(0, m.start() - 25), m.start())
+                        and not _glued_alpha(text, m.start(), m.end())):
+                    out.append(self._span(text, m.start(), m.end(), E.BRN, 0.85))
                 continue
             ctx = _ctx(_CTX_BRN, text, m.start(), m.end(), before=25)
             if m.group("s") == "-":
@@ -649,7 +736,8 @@ _MRN_UNIT_AFTER = re.compile(r"[ \t]?(?:년|월|일|세|개월|개|장|건|회|�
 
 # "(M/52, #20934411)": a '#' number right after sex/age in a patient list entry.
 _MRN_HASH_RX = re.compile(
-    r"(?:[MF][ ]?/[ ]?[0-9]{1,3}|[0-9]{1,3}[ ]?/[ ]?[MF]|[0-9]{1,3}[ ]?세|남|여)[ ]*[,;/][ ]*"
+    r"(?:[MF][ ]?/[ ]?[0-9]{1,3}|[0-9]{1,3}[ ]?/[ ]?[MF]|[0-9]{1,3}[ ]?세|남|여|(?<![A-Za-z])[MF]|"
+    r"(?:19|20)?[0-9]{2}[.\-/][0-9]{1,2}[.\-/][0-9]{1,2})[ ]*[,;/][ ]*"
     r"#[ ]?(?P<v>[0-9]{5,10})(?![0-9])",
     _A,
 )
@@ -742,7 +830,9 @@ class IpRecognizer(_Recognizer):
             value = m.group()
             if not V.ipv4_ok(value) or _ctx(_CTX_VERSION, text, m.start(), m.end(), before=12):
                 continue
-            ctx = _ctx(_CTX_IP, text, m.start(), m.end(), before=20)
+            # the host of a link ("http://192.168.0.12/view") is an address whatever it looks like
+            ctx = text.startswith("//", max(0, m.start() - 2)) or _ctx(_CTX_IP, text, m.start(), m.end(),
+                                                                       before=20)
             if not ctx and all(len(p) == 1 for p in value.split(".")):
                 continue  # "1.2.3.4" is far more often a heading number than an address
             out.append(self._span(text, m.start(), m.end(), E.IP, 0.95 if ctx else 0.85))
@@ -882,6 +972,118 @@ _RRN_FRONT_RX = re.compile(
 _CTX_RRN_FRONT = re.compile(r"주민|외국인[ \t]?등록|등록[ \t]?번호|\brrn\b|\bssn\b|뒷[ \t]?자리|뒤[ \t]?7", _AI)
 
 
+# A birth word right after the date: "1979년 4월 5일 출생", "1979.04.05 생일", "...에 태어남".
+_BIRTH_AFTER = re.compile(r"[ \t]*(?:에[ \t]?)?(?:출생|태어|탄생|생일)")
+# Short birth labels right before the date: "생 1979.4.5", "b. 1979.4.5" (not "85년 생 ...").
+_BIRTH_SHORT_LABEL = re.compile(
+    r"(?:(?<![가-힣0-9])(?<!년[ \t])(?<![0-9][ \t])생|(?<![A-Za-z])b\.)[ \t]*[:：]?[ \t]*\Z")
+# Chart-header parentheticals: "표다은(79.04.05, F)", "(1979.04.05/F)", "(여, 1979-04-05)",
+# "(1979.04.05, 47세)". The date is a birth date when the same parentheses hold a sex or an age.
+_PAREN_SEX = re.compile(
+    r"(?<![A-Za-z가-힣])(?:남자|여자|남성|여성|남아|여아|남|여|[MF]|(?i:male|female))(?![A-Za-z가-힣])"
+    r"(?![ ]?/[ ]?[A-Za-z])")   # not "F/U" (follow-up)
+# A follow-up or planned visit in the parentheses: "(2024.03.15, F/U)", "(2024.04.01 재진 예정)".
+_FOLLOW_UP = re.compile(r"(?<![A-Za-z])f[ ]?/[ ]?u\b|follow|추적|재진|예정|다음", re.IGNORECASE)
+_PAREN_AGE = re.compile(r"(?<![0-9])(?:만[ ]?)?(?P<age>[0-9]{1,3})[ ]?(?:세|살|y/?o|yrs?|Y)(?![A-Za-z가-힣])")
+_PAREN_MAX_BEFORE, _PAREN_MAX_AFTER = 30, 40
+# The word right before the parentheses names another date: "검사일(2024.03.15, 남)".
+_PAREN_DATE_LABEL = re.compile(
+    r"(?:내원|진료|입원|퇴원|수술|검사|방문|작성|발행|접수|시행|처방|투약|채혈|촬영|예약|사망|진단|발병|"
+    r"발생|등록|가입|시작|종료|기준|초진|재진|외래|검진|시술|분만|출산|접종|측정|결과|보고|판독|"
+    r"admission|discharge|visit|exam|report|test|surgery|op)(?:일|일자|일시|날|날짜|date)?[ ]?\Z",
+    re.IGNORECASE)
+_WORD_BEFORE_PAREN = re.compile(r"([가-힣A-Za-z]+)[ ]?\Z")
+
+
+def _paren_parts(text: str, start: int, end: int) -> tuple[str, str] | None:
+    """(text before, text after) the date inside the parentheses enclosing it on its line."""
+    i, lo = start - 1, max(0, start - _PAREN_MAX_BEFORE)
+    while i >= lo and text[i] not in "()（）\n":
+        i -= 1
+    if i < lo or text[i] not in "(（":
+        return None
+    j, hi = end, min(len(text), end + _PAREN_MAX_AFTER)
+    while j < hi and text[j] not in "()（）\n":
+        j += 1
+    if j >= hi or text[j] not in ")）":
+        return None
+    return text[i + 1:start], text[end:j]
+
+
+def _not_future(year: int | None, month: int | None, day: int | None) -> bool:
+    today = datetime.date.today()
+    if year is None:
+        return True
+    if year > today.year:
+        return False
+    if year == today.year and month is not None:
+        if month > today.month:
+            return False
+        if month == today.month and day is not None and day > today.day:
+            return False
+    return True
+
+
+def _paren_birth(text: str, start: int, end: int) -> bool:
+    """A date inside a parenthetical that also holds a sex or an age marker.
+
+    An age must fit the date as a birth date ("(1979.04.05, 47세)"); "(2015.03.02, 45세)"
+    after a procedure is the age at that date, not a birth date. Future dates never count.
+    """
+    if "(" not in text and "（" not in text:
+        return False
+    parts = _paren_parts(text, start, end)
+    if parts is None:
+        return False
+    rest = " ".join(parts)
+    if _OTHER_DATE_KW.search(rest) or _FOLLOW_UP.search(rest):
+        return False
+    open_at = start - len(parts[0]) - 1
+    w = _WORD_BEFORE_PAREN.search(text, max(0, open_at - 12), open_at)
+    if w and _PAREN_DATE_LABEL.fullmatch(w.group(1)):
+        return False
+    sex = _PAREN_SEX.search(rest)
+    age = _PAREN_AGE.search(rest)
+    if not sex and not age:
+        return False
+    year, month, day = parse_date(text[start:end])
+    if not _not_future(year, month, day):
+        return False
+    if age:
+        if year is None:
+            return False
+        gap = (datetime.date.today().year - year) - int(age.group("age"))
+        if not -2 <= gap <= 10:   # Korean age (+1) and charts written a few years ago
+            return False
+    return True
+
+
+def _birth_hint(text: str, start: int, end: int) -> bool:
+    """Birth evidence other than a keyword label before the date (see _birth_context)."""
+    if _BIRTH_AFTER.match(text, end):
+        return True
+    if (_BIRTH_SHORT_LABEL.search(text, max(0, start - 8), start)
+            and not _EVENT_AFTER.match(text[end:end + 16])):
+        return True
+    return _paren_birth(text, start, end)
+
+
+# "<name>(1979.04.05)", "<name> (1979.04.05, #20934411)": the date is the end of the
+# parentheses or is followed by a separator and more header fields.
+_DOB_PAREN_END = re.compile(r"[ ]*(?:[)）]|[,;/][^()（）\n]{0,40}[)）])")
+
+
+def birthdate_after_name(text: str, start: int, end: int) -> bool:
+    """True when the date text[start:end] opens a parenthetical right after a name and
+    reads as a birth date there (not in the future, no event word in the parentheses).
+    The caller checks that a PERSON span ends right before the "(" (see engine.Detector)."""
+    m = _DOB_PAREN_END.match(text, end)
+    if not m or _OTHER_DATE_KW.search(m.group()) or _FOLLOW_UP.search(m.group()):
+        return False
+    year, month, day = parse_date(text[start:end])
+    return year is not None and _not_future(year, month, day)
+
+
 def _saeng_at(text: str, pos: int) -> bool:
     """True if text[pos] is the birth suffix 생/生 (not 생검, 생활 ...)."""
     if pos >= len(text) or text[pos] not in "생生":
@@ -963,7 +1165,7 @@ class DateRecognizer(_Recognizer):
             saeng = _saeng_after(text, end)
             if saeng:
                 out.append(self._span(text, start, end + saeng, E.BIRTHDATE, max(score, 0.85)))
-            elif _birth_context(text, start, end, lo):
+            elif _birth_context(text, start, end, lo) or _birth_hint(text, start, end):
                 out.append(self._span(text, start, end, E.BIRTHDATE, 0.9))
             elif not needs_ctx:
                 out.append(self._span(text, start, end, E.DATE, score))
@@ -1060,8 +1262,9 @@ class ReferenceIdRecognizer(_Recognizer):
 _SD = "공영일이삼사오육칠팔구"
 _SP_SEP = r"(?:[ \t]*(?:에|-|,|\.)[ \t]*|[ \t]+)?"
 _SPOKEN_PHONE_RX = re.compile(
-    rf"(?<![가-힣])[공영]일[공영육칠팔구]{_SP_SEP}[{_SD}]{{3,4}}{_SP_SEP}[{_SD}]{{4}}"
-)
+    rf"(?<![가-힣])[공영]일[공영육칠팔구]{_SP_SEP}(?:[{_SD}]{{3,4}}|[0-9]{{3,4}})"
+    rf"{_SP_SEP}(?:[{_SD}]{{4}}|[0-9]{{4}})(?![0-9])"
+)  # the later groups may already be in digits: "공일공-4321-8765"
 _SK_UNIT = "일이삼사오육칠팔구"
 _SPOKEN_MONTH = r"(?:십[일이]?|[일이삼사오육유칠팔구시])월"
 _SPOKEN_DAY = rf"(?:[이삼]?십[{_SK_UNIT}]?|[{_SK_UNIT}])일"
@@ -1075,7 +1278,7 @@ _CTX_SPOKEN_BIRTH = re.compile(r"생년월일|생일|출생|태어|\bdob\b|birth
 # --------------------------------------------------------------------------- assembly
 
 BUILTIN_RECOGNIZERS = (
-    RrnRecognizer, PhoneRecognizer, EmailRecognizer, UrlRecognizer, CardRecognizer,
+    RrnRecognizer, PhoneRecognizer, EmailRecognizer, UrlRecognizer, UrlParamRecognizer, CardRecognizer,
     AccountRecognizer, PassportRecognizer, DriverLicenseRecognizer, BrnRecognizer,
     HealthInsuranceRecognizer, MrnRecognizer, MedicalLicenseRecognizer, IpRecognizer, PlateRecognizer,
     DateRecognizer, ReferenceIdRecognizer,

@@ -246,7 +246,7 @@ Config (`config.toml`)
 Formats
 - Pasted tables (`formats.text.table_spans`): tab-separated rows always; comma-separated rows
   only under a recognised header row AND each typed cell must look like its kind (PERSON:
-  `name_shaped`; others: `tabular.plausible`). `Batch.add(text, setter, entity=None, *,
+  `name_shaped`; others: `text.value_shaped`, see the v0.2.0 amendments). `Batch.add(text, setter, entity=None, *,
   typed=spans)` takes such cell spans. `tabular.normalize_header` strips only 1-2 trailing
   digits ("연락처1"), so a cell holding a value ("주민번호 900101-...") is never a header.
 - Zip budget for every OOXML/HWPX read (`formats.text.zip_size_problem`, `ZIP_TOO_BIG_ERROR`):
@@ -273,3 +273,92 @@ CLI / web / session / mac
   `session.make_private_dir()` / `prepare_work_dir()` (0700 work folders).
 - `cli.install_hint(*packages)` names `pipx inject <venv>` or `<python> -m pip install`.
 - User documentation: `README.md` (Korean, for the clinician) and `macos/README.md`.
+
+### Amendments after the completeness review (2026-10, v0.2.0; authoritative where they differ)
+
+Engine and recognizers
+- Containers: `engine.resolve_overlaps(spans, is_keep=None)`. A span whose action is `keep`
+  (URL, DATE, or any entity configured `keep`) that FULLY contains a span of another action is
+  dropped, so the inner span wins and the rest stays as written; partial overlaps are still
+  decided by score. `Detector` passes `is_keep`; propagation of known values also opens kept
+  containers (a known name in a URL path is masked). With `URL` not `keep`, URLs are no container.
+- `patterns.UrlParamRecognizer` (name `url_param`): values after `?`/`&`/`;`/`#` for personal
+  keys (name, patient_name, rrn, jumin, tel, phone, hp, pid, mrn, email, birth, dob ...), only
+  when the value has a plausible shape (`?name=report.pdf`, `?contact=us` stay). An IPv4 right
+  after `//` is a host and follows the IP action.
+- Birth dates without a 생년월일 label: date + 출생/생일/태어/탄생; `생 1979.4.5`, `b. 1979.4.5`;
+  a date in a parenthetical with a sex/age marker (`(79.04.05, F)`, `(1979.04.05/F)`), the age
+  consistent with the date; future dates, a date label before the parenthesis (검사일 ...),
+  event words, F/U and 예정 block it. `patterns.birthdate_after_name(text, start, end)` is public;
+  the Detector turns DATE into BIRTHDATE for `PERSON (date ...)`. names: `name(date, sex/age)`
+  is PERSON evidence; `#NNNN` after a bare M/F or a date is an MRN.
+- Addresses: a value after 주소/주소지/현주소/거주지/자택/송부지 ... is parsed word by word and
+  needs a real address feature (chief complaints such as `주소: 두통` stay); home units without
+  동/호 (`행복빌라 302호`, `102-1501 행복아파트`), labelled postal codes and `(06236) <address>`.
+  `generalize_address` skips a leading postal code; `_extend_left` stops at the first
+  non-administrative word after a 시/구 word (`동행`, `동안` ... are not 동 names).
+- 이니셜 and 이메일 are name stopwords; initials after 이니셜/initials are PERSON. A BRN whose
+  checksum fails is accepted (score 0.85) right after its own 사업자(등록)번호/BRN label.
+
+Vault
+- `Vault.restore(text, *, links=True, particles=True)`: directly after a restored token the
+  Korean particle is fixed to the restored value (와/과, 은/는, 이/가, 을/를, 로/으로 with the
+  ㄹ rule, 랑/이랑, 아/야; a final digit uses its Sino-Korean reading). Helper
+  `vault.fix_particle(value, text, pos) -> (particle, length) | None`.
+
+Config (`deid.config`)
+- Loading validates and raises ValueError with a Korean message (nearest name via difflib) for
+  unknown top-level keys or tables, unknown entity names in `[actions]`/`[labels]`/`enabled`/
+  `disabled`, invalid actions, bad `[columns]` values and invalid `[[patterns]]` (entity and
+  regex required, regex must compile). Entity names are case-insensitive and Korean labels
+  (이름, 전화번호 ...) are accepted; Korean action aliases (가명, 삭제 ...) too; custom
+  `[[patterns]]` entities are valid everywhere. `[columns]` values normalise to an entity name,
+  `skip` or `text`. TOML errors get Korean messages (a duplicate `[table]` hints at pasting the
+  example below an existing file; the built-in 3.10 reader also rejects duplicates).
+- `names`/`allowlist` found inside another table are lifted to the top level with a warning.
+- `read_toml(path) -> dict`, `validate(path=None) -> (errors, warnings)`,
+  `validate_report(path=None) -> list[str]`; `config_from_dict(data, base=None, *, problems=None)`
+  appends soft warnings to `problems`.
+
+Formats
+- Comma tables in prose: each typed cell must fit `text.value_shaped(entity, value)` (BIRTHDATE/
+  DATE need `text.date_shaped`, PHONE a phone-like digit run that is not a date or an amount,
+  EMAIL/IP/PLATE their exact shapes, ID entities a single identifier, custom types short values).
+  `tabular.plausible` is unchanged and still used for xlsx header detection.
+  `column_entity` never takes a cell holding a date or an age for a header.
+- `merge_typed` (with a strength function; Batch always passes one): a detected span that runs
+  past the typed cells it overlaps keeps its outside part; a typed keep/mask span gives way to a
+  stronger detected span inside it. A phone-column cell types only the number; the rest is
+  detected, and a lone name-shaped word next to the number is typed PERSON (TSV, CSV, xlsx).
+- Images (`image._Redactor._snap_to_ink`): every non-estimated (tesseract) box grows outward over
+  the ink it cuts through until a blank run of 0.2 x line height (at most 0.6 x line height),
+  then gets 0.12 x line height horizontal / 0.05 vertical padding, stopping one pixel short of
+  the next word's ink. OCR read one syllable at a time keeps a spaced variant after name labels;
+  a label-slot value is at most 4 syllables of whole words.
+- `formats.HINTS` (DICOM, GIF, e-mail, video/audio): `unsupported_message()` says what to do for a
+  single file; folder runs and the watch folder still only skip these (`is_legacy` is False).
+
+CLI / watch / web / session
+- `watch.LiveConfig(path=None, cfg=None, *, follow=True)` follows the config file (mtime, size,
+  inode, ctime); `refresh() -> ConfigChange | None`; a file that does not load keeps the
+  previous Config and sets `.error`; `LiveConfig.static(cfg)` never reloads. Helpers
+  `config_error_text(e, path=None)`, `config_location(path=None) -> (Path, explicit)`.
+  `run_watch(..., cfg=)` takes a LiveConfig, a Config (fixed) or None (follow the default file)
+  and refreshes before every pass. `DeidServer` keeps `.live`, refreshes after the token check of
+  each request, and adds `config_warning` to authenticated JSON / `X-Deid-Report` while the file
+  is broken (page banner `#config-warning`).
+- A config that does not load stops every command (Korean message, exit 2, no traceback);
+  `install-watch` refuses to install with a broken config; `deid doctor` shows [XX] for errors
+  and [!!] for each `validate_report` warning. `deid text` stops with exit 2 and no output when
+  detection raises RuntimeError (e.g. a `[ner]` backend that is not installed).
+- Version 0.2.0. `cli.build_info()` (never raises): git commit/branch read from `.git` files for a
+  source checkout (never runs git), else pip's `direct_url.json` (commit and URL without
+  credentials; a folder install adds `, 설치 YYYY-MM-DD HH:MM`), else the install folder.
+  `cli.version_text()` backs `deid --version`; doctor, the watch log and the serve banner show it.
+- Session: `session.json` holds `created` and `last_used` (each successful load/save updates
+  `last_used`). Expiry = idle >= `DEID_SESSION_HOURS` (12); `last_used` more than 1 h in the
+  future also expires; 0.1 files fall back to `created`. `session_idle_hours()`,
+  `forget_session_items(describe=False) -> list[str]` (what `deid forget` prints; never values).
+- Vault passphrase: `cli._can_prompt()` (stdin TTY, or stderr TTY with /dev/tty);
+  without a terminal `NO_TTY_PASS_ERROR` names DEID_VAULT_PASS (`deid restore --notify` also
+  notifies).

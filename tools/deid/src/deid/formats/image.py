@@ -74,6 +74,15 @@ EST_PAD_RATIO = 0.3         # extra horizontal padding when char boxes are line 
 # ends of the line box, or of the word when word positions came from the ink): measured up to
 # ~7.5% of that distance with real fonts, so estimated spans get this share as extra padding.
 DRIFT_RATIO = 0.1
+# Tesseract's word / character boxes of Hangul can start or end inside a glyph (measured up to
+# 0.4 x the line height at 48 px: the left stroke of '남', the left half of '류' stayed visible).
+# Its boxes get extra padding, and the sides of every engine-measured (not estimated) span
+# box are moved out to the edge of the ink they cut through: ink continues past the box edge
+# until a blank gap of SNAP_GAP_RATIO x line height (a word space) or SNAP_MAX_RATIO.
+TESS_PAD_RATIO = 0.12       # extra horizontal padding of tesseract boxes, x line height
+TESS_PAD_Y_RATIO = 0.05     # extra vertical padding of tesseract boxes, x line height
+SNAP_GAP_RATIO = 0.2
+SNAP_MAX_RATIO = 0.6
 GAP_JOIN_RATIO = 0.3        # OCR words closer than this (x height) are re-joined in a variant
 SEEN_OVERLAP = 0.5          # boxes overlapping more than this share are the same finding
 COVERED_SHARE = 0.8         # re-check: a finding this much inside a covered area is done
@@ -188,6 +197,32 @@ _HONORIFIC_SLOT_RX = re.compile(
     r"(?<![\w])(?P<v>[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)\s?(?:님|씨|선생님|환자분|보호자분)")
 SLOT_SCORE = 0.55
 SLOT_SOURCE = "ocr_slot"
+
+
+SLOT_MAX_SYLLABLES = 4       # a Korean name: 2-4 syllables (남궁서진)
+
+
+def _trim_slot(line: OcrLine, s: int, e: int) -> int:
+    """End of a label-slot value that spans several OCR words, without the trailing whole
+    words that make it longer than a name: in a re-joined variant ("환자명: 류하은혈압" from
+    "류 하 은 혈압") the slot also took the next word, which then got painted over."""
+    starts = line.word_starts()
+    if starts is None:
+        return e
+    inside = [(st, st + len(w.text)) for st, w in zip(starts, line.words)
+              if st < e and st + len(w.text) > s]
+
+    def syllables(a: int, b: int) -> int:
+        return sum(1 for c in line.text[max(a, s):min(b, e)] if _is_hangul(c))
+
+    while len(inside) >= 2:
+        total = sum(syllables(a, b) for a, b in inside)
+        last = syllables(*inside[-1])
+        if total <= SLOT_MAX_SYLLABLES or last < 2 or total - last < 2:
+            break
+        inside.pop()
+        e = min(e, inside[-1][1])
+    return e
 
 
 def _slot_spans(text: str) -> list[tuple[int, int]]:
@@ -342,7 +377,8 @@ def _variants(line: OcrLine) -> list[tuple[str, list[int]]]:
 
     Variant 0 is line.text itself; the others drop some of the single spaces between OCR words:
     (1) gaps narrower than GAP_JOIN_RATIO x height, (2) between two single-syllable Hangul
-    words, (3) next to any single-syllable Hangul word.
+    words, (3) next to any single-syllable Hangul word, (4, 5) like (2) and (3) but keeping
+    the space after a name label and before an honorific inside a joined run ("담당의 길예준 님").
     """
     text = line.text
     base = (text, list(range(len(text))))
@@ -362,6 +398,7 @@ def _variants(line: OcrLine) -> list[tuple[str, list[int]]]:
                 rules[1].add(i)
             if one_l or one_r:
                 rules[2].add(i)
+    rules += [_split_run_joins(words, rules[1]), _split_run_joins(words, rules[2])]
     out = [base]
     seen = {text}
     for removed in rules:
@@ -385,6 +422,58 @@ def _variants(line: OcrLine) -> list[tuple[str, list[int]]]:
             seen.add(fixed)
             out.append((fixed, mp))
     return out
+
+
+_RUN_WORDS: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+
+
+def _run_words() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(Hangul name labels, Hangul honorifics), longest first."""
+    global _RUN_WORDS
+    if _RUN_WORDS is None:
+        mod = _names_module()
+        labels = {lab.replace(" ", "") for lab in getattr(mod, "NAME_LABELS", ())
+                  if lab and all(_is_hangul(c) for c in lab.replace(" ", ""))}
+        hons = {h for h in getattr(mod, "HONORIFICS", ()) if h and all(_is_hangul(c) for c in h)}
+        _RUN_WORDS = (tuple(sorted(labels, key=lambda w: (-len(w), w))),
+                      tuple(sorted(hons, key=lambda w: (-len(w), w))))
+    return _RUN_WORDS
+
+
+def _split_run_joins(words: Sequence[OcrWord], joins: set[int]) -> set[int]:
+    """`joins` (gaps to close between OCR words) minus the gap after a name label and the gap
+    before an honorific inside each joined run: small text OCR'd one syllable at a time ("담 당
+    의 길 예 준 님") joins to "담당의길예준님", which no name rule reads; "담당의 길예준 님" is.
+    Empty when nothing changes (the variant would repeat another one)."""
+    if not joins:
+        return set()
+    labels, hons = _run_words()
+    keep = set(joins)
+    i, n = 0, len(words)
+    while i < n - 1:
+        if i not in joins:
+            i += 1
+            continue
+        j = i
+        while j in joins:
+            j += 1
+        texts = [w.text for w in words[i:j + 1]]
+        if all(t and all(_is_hangul(c) for c in t) for t in texts):
+            run = "".join(texts)
+            ends, pos = [], 0             # ends[k]: length of texts[0..k] joined
+            for t in texts:
+                pos += len(t)
+                ends.append(pos)
+            lab = next((w for w in labels if run.startswith(w) and len(run) - len(w) >= 2
+                        and len(w) in ends[:-1]), "")
+            hon = next((h for h in hons if run.endswith(h) and len(run) - len(lab) - len(h) >= 2
+                        and len(run) - len(h) in ends[:-1]), "")
+            if lab:
+                keep.discard(i + ends.index(len(lab)))
+            if hon:
+                keep.discard(i + ends.index(len(run) - len(hon)))
+        i = j + 1
+    return keep if keep != joins else set()
 
 
 def _merge_same_entity(spans: Iterable[Span], text: str) -> list[Span]:
@@ -446,6 +535,8 @@ def detect_lines(lines: Sequence[OcrLine], detector: "Detector",
                     hits.append((a, b, E.PERSON, SLOT_SCORE, SLOT_SOURCE))
         for a, b, ent, score, source in hits:
             s, e = mp[a], mp[b - 1] + 1
+            if source == SLOT_SOURCE:
+                e = _trim_slot(line, s, e)
             per_line[idx - n_ctx].append(Span(s, e, ent, line.text[s:e], score, source))
     opts = dict(getattr(cfg, "ocr", None) or {})
     if slots_on and _on(opts.get("bare_names", True)):
@@ -531,13 +622,113 @@ class _Redactor:
         if line.estimated:
             px += DRIFT_RATIO * _anchor_distance(box, line)
         py = PAD_RATIO * h
-        x1 = max(0, math.floor(box[0] - max(px, 1.0)))
+        if str(line.engine or "").startswith("tesseract"):
+            lh = max(line.height, 0.5 * h, 1.0)
+            px += TESS_PAD_RATIO * lh
+            py += TESS_PAD_Y_RATIO * lh
+        pl = pr = max(px, 1.0)
+        if not line.estimated:
+            # Measured boxes: grow over the ink they cut, then pad into the blank space
+            # only, stopping a pixel short of the next word's ink.
+            box, room_l, room_r = self._snap_to_ink(box, max(line.height, 1.0))
+            pl, pr = min(pl, max(1.0, room_l - 1.0)), min(pr, max(1.0, room_r - 1.0))
+        x1 = max(0, math.floor(box[0] - pl))
         y1 = max(0, math.floor(box[1] - max(py, 1.0)))
-        x2 = min(self.img.width, math.ceil(box[2] + max(px, 1.0)))
+        x2 = min(self.img.width, math.ceil(box[2] + pr))
         y2 = min(self.img.height, math.ceil(box[3] + max(py, 1.0)))
         if x2 <= x1 or y2 <= y1:
             return None
         return (x1, y1, x2, y2)
+
+    def _snap_to_ink(self, box: Box, height: float) -> tuple[Box, float, float]:
+        """(`box` with its left and right sides moved out over the ink they cut through,
+        blank room left of it, blank room right of it).
+
+        Columns are read in the box's own text band (at most one line height around its
+        middle, so a neighbouring line does not count); a side moves to the last ink column
+        before a blank run of SNAP_GAP_RATIO x `height`, at most SNAP_MAX_RATIO x `height`
+        away. Regions painted earlier count as blank. A box whose sides lie in blank space
+        is returned unchanged. The room is the distance from a side to the next ink beyond
+        it (the neighbouring word), infinite when there is none within reach."""
+        width, img_h = self.img.size
+        cy = (box[1] + box[3]) / 2
+        y1 = max(0, math.floor(max(box[1], cy - 0.6 * height)))
+        y2 = min(img_h, math.ceil(min(box[3], cy + 0.6 * height)))
+        reach = max(3, math.ceil(SNAP_MAX_RATIO * height))
+        gap = max(2, round(SNAP_GAP_RATIO * height))
+        x1, x2 = math.floor(box[0]), math.ceil(box[2])
+        # columns read: the reach, plus room for finding the next word beyond it
+        extra = math.ceil(0.5 * height) + 2
+        cx1, cx2 = max(0, x1 - reach - extra), min(width, x2 + reach + extra)
+        inf = float("inf")
+        if y2 - y1 < 2 or cx2 <= cx1 or x2 <= x1:
+            return box, inf, inf
+        try:
+            from PIL import Image
+
+            from ..ocr import INK_DIFF, _box_filter
+            # The background grey comes from a taller crop (half a line above and below):
+            # inside the text band of a large bold name the ink can outweigh it.
+            ty1 = max(0, y1 - math.ceil(0.5 * height))
+            ty2 = min(img_h, y2 + math.ceil(0.5 * height))
+            tall = self.img.crop((cx1, ty1, cx2, ty2))
+            tall = tall.convert("L") if tall.mode != "L" else tall.copy()
+            # Areas painted before are no ink (and no background): a box covering the first
+            # OCR pass's span must not bridge the word gap for an overlapping span of another
+            # pass.
+            fresh = Image.new("L", tall.size, 255)
+            hits = [(max(0, r[0] - cx1), max(0, r[1] - ty1), min(cx2, r[2]) - cx1,
+                     min(ty2, r[3]) - ty1)
+                    for r in self.painted if r[0] < cx2 and r[2] > cx1 and r[1] < ty2 and r[3] > ty1]
+            for r in hits:
+                fresh.paste(0, r)
+            hist = tall.histogram(fresh if hits else None)[:256]
+            if not any(hist):
+                return box, inf, inf
+            bg = max(range(256), key=hist.__getitem__)
+            for r in hits:
+                tall.paste(bg, r)
+            gray = tall.crop((0, y1 - ty1, cx2 - cx1, y2 - ty1))
+            mask = gray.point([255 if abs(v - bg) > INK_DIFF else 0 for v in range(256)])
+            cols = mask.resize((cx2 - cx1, 1), _box_filter()).tobytes()
+        except Exception:  # noqa: BLE001 - snapping is a refinement; padding still applies
+            return box, inf, inf
+
+        def ink(x: int) -> bool:
+            return bool(cols[x - cx1])
+
+        def inner_blank(xs: range) -> int:
+            """Blank columns just inside the box edge (the box may overshoot the ink)."""
+            n = 0
+            for x in xs:
+                if ink(x) or n >= gap:
+                    break
+                n += 1
+            return n
+
+        def walk(xs: range, edge: float, step: int, blank: int, limit: int) -> tuple[float, float]:
+            """(new edge, room): follow ink out of the box (up to `limit`) until a word gap
+            counted from the last ink inside the box, then find the next ink beyond it."""
+            snapping = blank < gap
+            for x in xs:
+                if snapping:
+                    if ink(x):
+                        if (x < limit) if step < 0 else (x >= limit):
+                            return edge, inf      # the ink goes on past the reach
+                        edge, blank = float(x if step < 0 else x + 1), 0
+                    else:
+                        blank += 1
+                        snapping = blank < gap
+                    continue
+                if ink(x):
+                    return edge, ((edge - (x + 1)) if step < 0 else (x - edge))
+            return edge, inf
+
+        left, room_l = walk(range(min(x1, cx2) - 1, cx1 - 1, -1), float(box[0]), -1,
+                            inner_blank(range(x1, min(x2, cx2))), x1 - reach)
+        right, room_r = walk(range(max(x2, cx1), cx2), float(box[2]), 1,
+                             inner_blank(range(x2 - 1, max(x1, cx1) - 1, -1)), x2 + reach)
+        return (min(left, box[0]), box[1], max(right, box[2]), box[3]), room_l, room_r
 
     def _paint(self, region: tuple[int, int, int, int], height: float) -> None:
         from PIL import Image, ImageDraw, ImageFilter

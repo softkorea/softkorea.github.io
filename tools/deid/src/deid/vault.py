@@ -36,6 +36,51 @@ def _inside(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
     return any(s < end and start < e for s, e in spans)
 
 
+# Korean particles whose form depends on the last sound of the word before them:
+# (after a vowel, after a consonant). 로 also follows a final ㄹ ("서울로", "김철로").
+# An LLM picks the form for "[이름1]" ("이름일" -> 과, 은, 이 ...), which may not fit the
+# restored name: "[이름2]와" -> "한지민와" must read "한지민과".
+_PARTICLE_PAIRS = (("랑", "이랑"), ("로", "으로"), ("와", "과"), ("는", "은"), ("가", "이"),
+                   ("를", "을"), ("야", "아"))
+_PAIR_OF = {form: pair for pair in _PARTICLE_PAIRS for form in pair}
+_PARTICLE_AFTER = re.compile(
+    r"(?:(?P<ro>으로|로)(?=(?:는|도|부터|서|써)?(?![가-힣]))"
+    r"|(?P<p>이랑|랑|와|과|는|은|가|이|를|을|야|아)(?![가-힣]))")
+# Sino-Korean reading of a final digit: 영 일 이 삼 사 오 육 칠 팔 구.
+_DIGIT_SOUND = {"0": "c", "1": "r", "2": "v", "3": "c", "4": "v", "5": "v", "6": "c", "7": "r",
+                "8": "r", "9": "v"}
+
+
+def _final_sound(value: str) -> str | None:
+    """'v' (vowel), 'r' (final ㄹ), 'c' (other final consonant) or None (unknown, e.g. Latin)."""
+    v = value.rstrip()
+    if not v:
+        return None
+    ch = v[-1]
+    if "가" <= ch <= "힣":
+        jong = (ord(ch) - 0xAC00) % 28
+        return "v" if jong == 0 else "r" if jong == 8 else "c"
+    return _DIGIT_SOUND.get(ch)
+
+
+def fix_particle(value: str, text: str, pos: int) -> tuple[str, int] | None:
+    """(particle in the form that fits `value`, length of the particle written at text[pos:])
+    when a particle directly follows a restored value, else None."""
+    m = _PARTICLE_AFTER.match(text, pos)
+    if not m:
+        return None
+    sound = _final_sound(value)
+    if sound is None:
+        return None
+    written = m.group("ro") or m.group("p")
+    vowel_form, cons_form = _PAIR_OF[written]
+    if m.group("ro"):
+        form = vowel_form if sound in ("v", "r") else cons_form
+    else:
+        form = vowel_form if sound == "v" else cons_form
+    return form, len(written)
+
+
 class VaultError(Exception):
     """Vault file cannot be opened: wrong passphrase, corrupted or unsupported file, conflict."""
 
@@ -108,27 +153,34 @@ class Vault:
         self._restore_rx = None
         return token
 
-    def restore(self, text: str, *, links: bool = True) -> str:
+    def restore(self, text: str, *, links: bool = True, particles: bool = True) -> str:
         """Replace every known token in `text` with its original value (longest token first).
 
         ``links=False`` leaves tokens inside URLs and e-mail links (:func:`link_spans`) as they
         are, so a link chosen by an LLM answer (``![](https://x.example/?p=[이름1])``) cannot
-        carry the real value off the computer; :meth:`tokens_in_links` counts them."""
+        carry the real value off the computer; :meth:`tokens_in_links` counts them.
+
+        ``particles``: a Korean particle written directly after a token is put in the form
+        that fits the restored value (와/과, 은/는, 이/가, 을/를, 로/으로, 랑/이랑, 아/야):
+        "[이름2]와" -> "한지민과"."""
         if not self.tokens:
             return text
         rx = self._token_rx()
-        if links:
-            return rx.sub(lambda m: self.tokens[m.group(0)], text)
-        spans = link_spans(text)
-        if not spans:
-            return rx.sub(lambda m: self.tokens[m.group(0)], text)
-
-        def sub(m: "re.Match[str]") -> str:
-            if _inside(m.start(), m.end(), spans):
-                return m.group(0)
-            return self.tokens[m.group(0)]
-
-        return rx.sub(sub, text)
+        spans = [] if links else link_spans(text)
+        out: list[str] = []
+        pos = 0
+        for m in rx.finditer(text):
+            if spans and _inside(m.start(), m.end(), spans):
+                continue
+            value = self.tokens[m.group(0)]
+            out += (text[pos:m.start()], value)
+            pos = m.end()
+            fixed = fix_particle(value, text, pos) if particles else None
+            if fixed is not None:
+                out.append(fixed[0])
+                pos += fixed[1]
+        out.append(text[pos:])
+        return "".join(out)
 
     def tokens_in_links(self, text: str) -> int:
         """How many known tokens in `text` sit inside a URL or e-mail link."""

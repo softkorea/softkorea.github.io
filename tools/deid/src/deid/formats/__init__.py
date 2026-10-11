@@ -83,6 +83,23 @@ LEGACY: dict[str, str] = {
             "(zip archives are not supported: unzip and pass the folder)",
 }
 
+# Types that are skipped quietly in a folder run but deserve a "what to do" hint when a single
+# file is named (README §1 "지원하지 않는 형식").
+_DICOM_HINT = ("DICOM 영상(.dcm)은 처리하지 못합니다. PACS의 익명화 내보내기 기능을 쓰거나, 화면에 띄워 "
+               "'deid shot'으로 캡처하세요 (DICOM is not supported: use the PACS anonymised export "
+               "or capture the screen with 'deid shot')")
+_MEDIA_HINT = ("동영상·음성 파일은 처리하지 못합니다 (video and audio files are not supported)")
+_MAIL_HINT = ("메일 파일은 처리하지 못합니다. 본문은 텍스트로, 첨부 파일은 따로 저장해 처리하세요 "
+              "(e-mail files are not supported: save the body as text and the attachments separately)")
+HINTS: dict[str, str] = {
+    ".dcm": _DICOM_HINT, ".dicom": _DICOM_HINT,
+    ".gif": "GIF 이미지는 지원하지 않습니다. PNG로 바꾼 뒤 다시 시도하세요 (GIF is not supported: "
+            "convert to PNG first)",
+    ".eml": _MAIL_HINT, ".msg": _MAIL_HINT, ".emlx": _MAIL_HINT,
+    **{ext: _MEDIA_HINT for ext in (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".mp3", ".m4a",
+                                    ".wav", ".aac", ".caf")},
+}
+
 OUTPUT_TAG = ".deid"
 
 
@@ -118,6 +135,8 @@ def unsupported_message(path: str | os.PathLike) -> str:
     ext = Path(path).suffix.lower()
     if ext in LEGACY:
         return LEGACY[ext]
+    if ext in HINTS:
+        return HINTS[ext]
     shown = ext or "(확장자 없음 / no extension)"
     return (f"지원하지 않는 파일 형식입니다: {shown}. 지원 형식: {supported_list()} "
             f"(unsupported file type {shown})")

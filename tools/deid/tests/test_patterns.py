@@ -487,8 +487,10 @@ def test_recognizer_protocol_and_entities():
         assert isinstance(r.entities, tuple) and r.entities
         assert callable(r.find)
         covered.update(r.entities)
-    expected = set(E.ALL) - {E.PERSON, E.ADDRESS}
+    # PERSON only through query-string values ("?name=..."), never ADDRESS
+    expected = set(E.ALL) - {E.ADDRESS}
     assert covered == expected
+    assert {r.name for r in RECS if E.PERSON in r.entities} == {"url_param"}
     assert len({r.name for r in RECS}) == len(RECS)
 
 
@@ -496,7 +498,9 @@ def test_pattern_recognizers_respects_enabled():
     cfg = default_config()
     cfg.enabled = {E.PHONE, E.BIRTHDATE}
     names = {r.name for r in P.pattern_recognizers(cfg)}
-    assert names == {"kr_phone", "date"}
+    assert names == {"kr_phone", "date", "url_param"}   # url_param: ?tel=..., ?dob=...
+    cfg.enabled = {E.CARD}
+    assert {r.name for r in P.pattern_recognizers(cfg)} == {"card"}
 
 
 def test_custom_patterns():

@@ -10,12 +10,14 @@
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6676; --line: #d9dde4;
     --accent: #2457c5; --accent-text: #ffffff; --ok: #1d7a46; --warn: #9a5b00; --err: #b3261e;
     --drop: #eef3ff; --notice: #fff6e0; --notice-line: #f0d48a;
+    --bad: #fdecea; --bad-line: #e8a39d;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14171c; --card: #1d2128; --text: #e7eaf0; --muted: #9aa3b2; --line: #343a45;
       --accent: #6e9bff; --accent-text: #0d1220; --ok: #5fd08f; --warn: #f0b85a; --err: #ff8a80;
       --drop: #1f2838; --notice: #2b2616; --notice-line: #5c4c1d;
+      --bad: #3a1d1b; --bad-line: #7a3a35;
     }
   }
   * { box-sizing: border-box; }
@@ -31,6 +33,8 @@
     margin: 16px 0; padding: 12px 14px; border-radius: 10px; background: var(--notice);
     border: 1px solid var(--notice-line); font-size: .95rem;
   }
+  .notice.bad { background: var(--bad); border-color: var(--bad-line); word-break: break-word; }
+  [hidden] { display: none !important; }
   section {
     background: var(--card); border: 1px solid var(--line); border-radius: 12px;
     padding: 18px; margin-top: 18px;
@@ -76,6 +80,8 @@
     <p>모든 처리는 이 컴퓨터 안에서만 이루어집니다. 인터넷으로 보내지 않습니다. (local only, 127.0.0.1)</p>
   </header>
 
+  <div id="config-warning" class="notice bad" role="alert"__CONFIG_HIDDEN__>__CONFIG_WARNING__</div>
+
   <div class="notice" role="note">
     <strong>주의:</strong> 자동 탐지는 완벽하지 않으니 공유 전 결과를 확인하세요.
     특히 손글씨, 특이한 이름, 별명, 사진 속 얼굴은 찾지 못할 수 있습니다.
@@ -108,9 +114,10 @@
   </section>
 
   <footer>
-    가명([이름1] 등)과 원래 값의 대응표는 이 컴퓨터에 암호화되어 저장되며 기본 12시간이 지나면 키와 함께
-    지워집니다 (이 화면이나 폴더 자동 감시가 켜져 있으면 곧바로, 아니면 다음에 deid를 실행할 때).
-    지금 지우려면 터미널에서 <code>deid forget</code>을 실행하세요.
+    가명([이름1] 등)과 원래 값의 대응표는 이 컴퓨터에 암호화되어 저장되며, 마지막으로 쓴 뒤 기본 12시간
+    동안 쓰지 않으면 키와 함께 지워집니다 (이 화면이나 폴더 자동 감시가 켜져 있으면 곧바로, 아니면 다음에
+    deid를 실행할 때). 지금 지우려면 터미널에서 <code>deid forget</code>을 실행하세요.
+    설정 파일(config.toml)을 고치면 다음 요청부터 바로 적용됩니다.
   </footer>
 </main>
 
@@ -130,6 +137,13 @@
 
   function busy(on) { buttons.forEach(function (b) { b.disabled = on; }); }
 
+  // A config.toml that no longer loads: the server keeps the previous settings and says so.
+  function showConfigWarning(msg) {
+    var el = $("config-warning");
+    if (!el) { return; }
+    if (msg) { el.textContent = msg; el.hidden = false; } else { el.hidden = true; }
+  }
+
   async function postJson(path, payload) {
     var r = await fetch(path, {
       method: "POST",
@@ -138,6 +152,7 @@
       credentials: "omit", cache: "no-store"
     });
     var data = await r.json().catch(function () { return { error: "HTTP " + r.status }; });
+    showConfigWarning(data.config_warning);
     if (!r.ok) { throw new Error(data.error || ("HTTP " + r.status)); }
     return data;
   }
@@ -236,11 +251,13 @@
       });
       if (!r.ok) {
         var err = await r.json().catch(function () { return { error: "HTTP " + r.status }; });
+        showConfigWarning(err.config_warning);
         throw new Error(err.error || ("HTTP " + r.status));
       }
       var blob = await r.blob();
       var info = {};
       try { info = JSON.parse(decodeHeader(r.headers.get("X-Deid-Report")) || "{}"); } catch (e) { info = {}; }
+      showConfigWarning(info.config_warning);
       var outName = decodeHeader(r.headers.get("X-Deid-Filename")) || info.filename || ("deid-" + file.name);
       download(blob, outName);
       item.meta.className = "ok";

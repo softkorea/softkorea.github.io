@@ -32,13 +32,18 @@ Propagation boundary rules (a found or registered value is searched as an exact 
 
 Values are looked up in hash sets at candidate positions (no giant regex), so tens of thousands
 of known values (a whole patient list) cost milliseconds.
+
+Overlaps: higher score wins, then the longer span, then the earlier one. A span whose action is
+"keep" (URL, DATE by default) is a container: when it fully contains a span of another action
+(a phone number, a name or an IP inside a URL) it is dropped and the inner span wins, so the
+rest of the link stays as it was. Propagated values open a kept container the same way.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 from bisect import bisect_left
-from typing import Iterable, Mapping, Tuple, Union
+from typing import Callable, Iterable, Mapping, Tuple, Union
 
 from . import entities as E
 from .config import Config, default_config
@@ -173,6 +178,17 @@ def _default_recognizers(cfg: Config) -> list[Recognizer]:
     return recs
 
 
+_DOB_GAP = re.compile(r"[ ]?[(（][ ]*")
+
+
+def _birthdate_after_name():
+    try:
+        from .recognizers.patterns import birthdate_after_name
+    except ImportError:
+        return None
+    return birthdate_after_name
+
+
 def _names_module():
     try:
         from .recognizers import names
@@ -231,8 +247,42 @@ class _SpanSet:
         self.starts[i:j] = [span.start]
 
 
-def resolve_overlaps(spans: Iterable[Span]) -> list[Span]:
-    """Keep non-overlapping spans: higher score wins, then longer, then earlier start."""
+def _open_containers(spans: list[Span], is_keep: Callable[[str], bool]) -> list[Span]:
+    """Drop every "keep" span (URL, DATE) that fully contains a span of another action.
+
+    A kept URL is a container, not a value: "https://emr.example/p?tel=010-2345-6789" keeps
+    the link text but the phone number inside it is still masked. The rest of the container
+    simply stays unchanged, which is what "keep" would have done.
+    """
+    keeps = [sp for sp in spans if is_keep(sp.entity)]
+    if not keeps:
+        return spans
+    inner = sorted((sp for sp in spans if not is_keep(sp.entity)), key=lambda s: s.start)
+    if not inner:
+        return spans
+    starts = [sp.start for sp in inner]
+    opened: set[int] = set()
+    for k in keeps:
+        i = bisect_left(starts, k.start)
+        while i < len(inner) and inner[i].start < k.end:
+            if inner[i].end <= k.end:
+                opened.add(id(k))
+                break
+            i += 1
+    if not opened:
+        return spans
+    return [sp for sp in spans if id(sp) not in opened]
+
+
+def resolve_overlaps(spans: Iterable[Span],
+                     is_keep: Callable[[str], bool] | None = None) -> list[Span]:
+    """Keep non-overlapping spans: higher score wins, then longer, then earlier start.
+
+    `is_keep(entity)`: True for entities whose action is "keep". Such a span loses to any
+    other span it fully contains (see _open_containers); partial overlaps use the scores.
+    """
+    if is_keep is not None:
+        spans = _open_containers(list(spans), is_keep)
     kept = _SpanSet()
     order = sorted(spans, key=lambda s: (-s.score, s.start - s.end, s.start, s.entity, s.source))
     for sp in order:
@@ -413,10 +463,31 @@ class Detector:
             if f is None:
                 out.append([])
                 continue
-            out.append([f.to_orig(sp) for sp in self._propagate(f.text, spans, matchers)])
+            spans = self._birth_after_person(f.text, self._propagate(f.text, spans, matchers))
+            out.append([f.to_orig(sp) for sp in spans])
         return out
 
     # ------------------------------------------------------------------ internals
+
+    def _birth_after_person(self, text: str, spans: list[Span]) -> list[Span]:
+        """A DATE in parentheses right after a name is the birth date of the chart header:
+        "환자 표다은(1979.04.05)", "표다은 (1979-04-05, #20934411)" -> BIRTHDATE."""
+        if len(spans) < 2 or not self.cfg.is_enabled(E.BIRTHDATE):
+            return spans
+        check = _birthdate_after_name()
+        if check is None:
+            return spans
+        out = None
+        for i in range(1, len(spans)):
+            sp, prev = spans[i], spans[i - 1]
+            if sp.entity != E.DATE or prev.entity != E.PERSON:
+                continue
+            if not _DOB_GAP.fullmatch(text, prev.end, sp.start) or not check(text, sp.start, sp.end):
+                continue
+            if out is None:
+                out = list(spans)
+            out[i] = Span(sp.start, sp.end, E.BIRTHDATE, sp.text, sp.score, sp.source)
+        return spans if out is None else out
 
     @staticmethod
     def _extra_known(known: KnownValues | None) -> dict[str, set[str]]:
@@ -452,7 +523,10 @@ class Detector:
                                      f"that does not match the text at {sp.start}:{sp.end}")
                 if cfg.is_enabled(sp.entity) and sp.text not in allow and sp.score >= cfg.min_score:
                     found.append(sp)
-        return resolve_overlaps(found)
+        return resolve_overlaps(found, self._is_keep)
+
+    def _is_keep(self, entity: str) -> bool:
+        return self.cfg.action_for(entity) == "keep"
 
     def _collect_values(self, span_lists: list[list[Span]],
                         extra: dict[str, set[str]] | None = None) -> dict[str, set[str]]:
@@ -507,7 +581,9 @@ class Detector:
 
         A match is added where nothing overlaps it, or replaces same-entity spans it fully
         contains (extending a partial detection), or replaces spans whose action is "keep"
-        (a DATE that is a known BIRTHDATE). It never displaces another entity otherwise.
+        (a DATE that is a known BIRTHDATE). A non-"keep" match inside a "keep" span opens it
+        (a known name in a kept URL path is masked; the rest of the URL stays). It never
+        displaces another entity otherwise.
         """
         if not text or not matchers:
             return spans
@@ -524,7 +600,9 @@ class Detector:
 
             def yields(h: Span) -> bool:
                 if not (c.start <= h.start and h.end <= c.end):
-                    return False
+                    # c inside a kept container (URL): the container gives way
+                    return (not c_keep and h.start <= c.start and c.end <= h.end
+                            and cfg.action_for(h.entity) == "keep")
                 if h.entity == c.entity:
                     return (h.start, h.end) != (c.start, c.end)
                 return not c_keep and cfg.action_for(h.entity) == "keep"

@@ -9,10 +9,13 @@ re-identified locally, but the user should not have to type a passphrase for eve
 * Passphrase: a random 32-byte key, kept in the macOS login Keychain
   (``security ... -a deid -s deid-session``) when available, otherwise in a 0600 key file
   ``~/.config/deid/session.key``.
-* Expiry: the session starts fresh once it is older than ``DEID_SESSION_HOURS`` (default 12)
-  hours, so old patients' names do not pile up. An expired session is deleted together with
-  its key (:func:`purge_expired_session`) by every deid command, every pass of the folder
-  watcher and periodically by ``deid serve`` - not only when the next clip needs it.
+* Expiry: the session starts fresh once it has not been used for ``DEID_SESSION_HOURS``
+  (default 12) hours - counted from the LAST use (every load or save of the vault updates
+  ``last_used`` in ``session.json``), so a conversation that is still going on keeps its
+  tokens while an idle session's names do not pile up. An expired session is deleted
+  together with its key (:func:`purge_expired_session`) at the next run of any deid command,
+  on every pass of the folder watcher and periodically by ``deid serve`` - not only when
+  the next clip needs it. Checking for expiry never counts as use.
 * A Keychain that cannot be read (locked, prompt cancelled, timeout) is an error, never "no
   key": the vault is kept and :class:`SessionError` explains what to do, so tokens already
   pasted into an LLM chat are never re-issued for a different person.
@@ -295,22 +298,73 @@ def key_location() -> str:
 # ---------------------------------------------------------------------- vault
 
 
-def _created() -> float | None:
+def _meta() -> tuple[float, float] | None:
+    """(created, last_used) from session.json; None when missing or unreadable. Files
+    written by deid 0.1 have no last_used: their creation time counts."""
     try:
         data = json.loads(meta_file().read_text("utf-8"))
-        return float(data["created"])
-    except (OSError, ValueError, KeyError, TypeError):
+        created = float(data["created"])
+        last = float(data.get("last_used", created))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
+    return created, last
+
+
+def _created() -> float | None:
+    meta = _meta()
+    return None if meta is None else meta[0]
+
+
+def _hours_since(t: float | None) -> float | None:
+    return None if t is None else max(0.0, (time.time() - t) / 3600.0)
 
 
 def session_age_hours() -> float | None:
-    created = _created()
-    return None if created is None else max(0.0, (time.time() - created) / 3600.0)
+    """Hours since the session was started (first token issued)."""
+    return _hours_since(_created())
+
+
+def session_idle_hours() -> float | None:
+    """Hours since the session was last used (loaded or saved): what expiry counts."""
+    meta = _meta()
+    return _hours_since(None if meta is None else meta[1])
 
 
 def _expired() -> bool:
-    age = session_age_hours()
-    return age is None or age >= session_hours()
+    meta = _meta()
+    if meta is None:
+        return True
+    idle = (time.time() - meta[1]) / 3600.0
+    # A last use more than an hour in the future (clock moved back, edited file) must not
+    # keep the session alive indefinitely.
+    return idle >= session_hours() or idle < -1.0
+
+
+def _write_meta(created: float, last_used: float) -> None:
+    meta = meta_file()
+    tmp = meta.with_name(f".{meta.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"created": created, "last_used": last_used}, f)
+        os.replace(tmp, meta)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _touch() -> None:
+    """Record a use of the session (expiry counts from the last use). Best effort."""
+    meta = _meta()
+    if meta is None:
+        return
+    try:
+        _write_meta(meta[0], time.time())
+    except OSError:  # pragma: no cover - read-only folder: the session just expires earlier
+        pass
 
 
 def _unlink(path: Path) -> bool:
@@ -343,11 +397,13 @@ def load_session_vault() -> Vault:
         keys, keychain_readable = _session_keys()
         for key in keys:
             try:
-                return Vault.load(vault_file(), key)
+                v = Vault.load(vault_file(), key)
             except VaultError:
                 continue
             except OSError:
                 break
+            _touch()     # in use: the expiry clock starts again
+            return v
         else:
             if not keychain_readable:
                 raise SessionError(KEYCHAIN_ERROR)
@@ -356,32 +412,72 @@ def load_session_vault() -> Vault:
 
 
 def save_session_vault(v: Vault) -> None:
-    """Encrypt `v` to the session file (creates the key and starts the expiry clock if new)."""
+    """Encrypt `v` to the session file (creates the key if new; records the use, so the
+    expiry clock starts again)."""
     with _THREAD_LOCK:
         key = session_key(create=True)
         if not key:  # pragma: no cover - session_key(create=True) always returns a key
             raise SessionError("세션 키를 만들 수 없습니다 (cannot create session key)")
         _mkdir_private(data_dir())
-        if not vault_file().exists() or _created() is None:
-            meta = meta_file()
-            tmp = meta.with_name(f".{meta.name}.{secrets.token_hex(4)}.tmp")
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"created": time.time()}, f)
-            os.replace(tmp, meta)
+        now = time.time()
+        created = _created() if vault_file().exists() else None
+        _write_meta(created if created is not None else now, now)
         v.save(vault_file(), key)
 
 
 def forget_session() -> bool:
     """Delete the session vault, its metadata and key (file and Keychain). True if anything
     was removed."""
+    return bool(forget_session_items())
+
+
+def _describe_vault() -> str:
+    """" - 가명 5개 (이름 3, 전화번호 2), 3.0시간 전 시작, 마지막 사용 0.5시간 전" for `deid forget`.
+    Counts and ages only, never values; best effort (a locked Keychain: no counts)."""
+    parts = []
+    try:
+        from . import entities
+
+        keys, _ = _session_keys()
+        for key in keys:
+            try:
+                v = Vault.load(vault_file(), key)
+            except (VaultError, OSError):
+                continue
+            by: dict[str, int] = {}
+            for ent, _orig, _tok in v.items():
+                lab = entities.label(ent)
+                by[lab] = by.get(lab, 0) + 1
+            detail = ", ".join(f"{lab} {n}" for lab, n in by.items())
+            parts.append(f"가명 {len(v)}개" + (f" ({detail})" if detail else ""))
+            break
+    except Exception:  # noqa: BLE001 - a description never blocks deleting
+        pass
+    age, idle = session_age_hours(), session_idle_hours()
+    if age is not None:
+        parts.append(f"{age:.1f}시간 전 시작")
+    if idle is not None:
+        parts.append(f"마지막 사용 {idle:.1f}시간 전")
+    return (" - " + ", ".join(parts)) if parts else ""
+
+
+def forget_session_items(describe: bool = False) -> list[str]:
+    """Delete the session vault, its metadata and key (file and Keychain) and return what was
+    deleted, one Korean line per item (`describe`: with the number of pseudonyms and the
+    session's age - never the values)."""
     with _THREAD_LOCK:
-        removed = _unlink(vault_file())
-        removed = _unlink(meta_file()) or removed
-        removed = _unlink(key_file()) or removed
+        removed: list[str] = []
+        about = _describe_vault() if describe and vault_file().exists() else ""
+        if _unlink(vault_file()):
+            removed.append(f"가명 대응표 (session vault): {vault_file()}{about}")
+        if _unlink(meta_file()):
+            removed.append(f"세션 정보 (session info): {meta_file()}")
+        if _unlink(key_file()):
+            removed.append(f"세션 키 파일 (key file): {key_file()}")
         if _use_keychain():
             try:
-                removed = mac.keychain_delete(KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE) or removed
+                if mac.keychain_delete(KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE):
+                    removed.append(f"키체인 항목 (Keychain item): {KEYCHAIN_SERVICE}")
             except mac.MacError:
                 pass
         return removed
@@ -500,7 +596,8 @@ def count_tokens(text: str, vault: Vault) -> int:
 
 
 __all__ = (
-    "load_session_vault", "save_session_vault", "forget_session", "open_session",
+    "load_session_vault", "save_session_vault", "forget_session", "forget_session_items",
+    "open_session", "session_age_hours", "session_idle_hours",
     "purge_expired_session", "data_dir", "config_dir", "user_dir", "vault_file", "key_file",
     "session_key", "session_hours", "seed_detector", "known_values", "unknown_tokens",
     "count_tokens", "make_private_dir", "prepare_work_dir", "loose_permissions",

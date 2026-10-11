@@ -15,7 +15,10 @@ Standard library only (ThreadingHTTPServer). Safety rules:
 * nothing is logged (request lines contain the token; bodies contain patient data);
 * text de-identification uses the session vault, so "원래대로 복원" works (also later with
   `deid restore`); while the server runs, an expired session is deleted (with its key)
-  within a minute, not only at the next request.
+  within a minute, not only at the next request;
+* settings follow the config file (:class:`deid.watch.LiveConfig`): every request re-reads it
+  when it changed. A file that no longer loads keeps the previous settings, and every
+  response says so (``config_warning`` in JSON / the report header, a banner on the page).
 
 Endpoints: ``GET /`` (page), ``POST /api/text`` {text} -> {text, counts, summary, warnings},
 ``POST /api/restore`` {text} -> {text, restored, unknown, in_links} (tokens inside URLs are
@@ -26,6 +29,7 @@ not restored), ``POST /api/file`` (raw body with an
 from __future__ import annotations
 
 import hmac
+import html
 import json
 import os
 import re
@@ -44,6 +48,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import formats
 from .types import Report
+from .watch import LiveConfig
 
 if TYPE_CHECKING:  # pragma: no cover
     from .config import Config
@@ -114,13 +119,17 @@ class DeidServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self, port: int = DEFAULT_PORT, cfg: "Config | None" = None, *,
+    def __init__(self, port: int = DEFAULT_PORT, cfg: "Config | LiveConfig | None" = None, *,
                  token: str | None = None,
                  session: Callable[[], ContextManager["Vault"]] | None = None) -> None:
-        from .config import load_config
-
+        # Settings first: a config file that does not load must not leave a bound socket.
+        if isinstance(cfg, LiveConfig):
+            self.live = cfg
+        elif cfg is None:
+            self.live = LiveConfig()      # the default config file, followed
+        else:
+            self.live = LiveConfig.static(cfg)
         super().__init__(("127.0.0.1", port), _Handler)
-        self.cfg = cfg if cfg is not None else load_config()
         self.token = token or secrets.token_urlsafe(24)
         self._purge = session is None    # only the real session vault expires on disk
         if session is None:
@@ -149,6 +158,31 @@ class DeidServer(ThreadingHTTPServer):
             pass
 
     @property
+    def cfg(self) -> "Config":
+        """The settings in use (the latest config file that loaded)."""
+        return self.live.cfg
+
+    @cfg.setter
+    def cfg(self, value: "Config") -> None:
+        self.live = LiveConfig.static(value)
+
+    def refresh_config(self) -> str | None:
+        """Re-read the config file if it changed (every request). Returns the current problem:
+        None, or why the file does not load (the previous settings stay in use)."""
+        try:
+            self.live.refresh()
+        except Exception:  # noqa: BLE001 - never fail a request over the settings check
+            pass
+        return self.config_warning()
+
+    def config_warning(self) -> str | None:
+        err = self.live.error
+        if not err:
+            return None
+        return ("설정 파일 오류 - 고칠 때까지 이전 설정으로 처리합니다 (config error: the previous "
+                f"settings are in use): {err}")
+
+    @property
     def port(self) -> int:
         return int(self.server_address[1])
 
@@ -164,11 +198,11 @@ class DeidServer(ThreadingHTTPServer):
 
     # ------------------------------------------------------------------ operations
 
-    def _detector(self, vault: "Vault"):
+    def _detector(self, vault: "Vault", cfg: "Config | None" = None):
         from .engine import Detector
         from .session import seed_detector
 
-        det = Detector(self.cfg)
+        det = Detector(cfg if cfg is not None else self.cfg)   # rebuilt per request
         seed_detector(det, vault)
         return det
 
@@ -176,25 +210,28 @@ class DeidServer(ThreadingHTTPServer):
         from .anonymizer import Anonymizer
         from .formats.text import deid_text
 
+        cfg = self.cfg     # one version of the settings for the whole request
         with self.work_lock, self.session() as vault:
-            out, report = deid_text(text, self._detector(vault), Anonymizer(self.cfg, vault))
+            out, report = deid_text(text, self._detector(vault, cfg), Anonymizer(cfg, vault))
         return {"text": out, "counts": dict(sorted(report.counts.items())),
-                "total": report.total, "summary": formats.format_counts(report, self.cfg),
+                "total": report.total, "summary": formats.format_counts(report, cfg),
                 "warnings": list(report.warnings)}
 
     def restore_text(self, text: str) -> dict:
         from .session import count_tokens, unknown_tokens
 
+        cfg = self.cfg
         with self.work_lock, self.session() as vault:
             in_links = vault.tokens_in_links(text)
             n = count_tokens(text, vault) - in_links
-            unknown = unknown_tokens(text, vault, self.cfg)
+            unknown = unknown_tokens(text, vault, cfg)
             out = vault.restore(text, links=False)
         return {"text": out, "restored": n, "unknown": unknown, "in_links": in_links}
 
     def deid_file(self, name: str, data: bytes) -> tuple[str, bytes, Report]:
         from .anonymizer import Anonymizer
 
+        cfg = self.cfg
         name = safe_upload_name(name)
         if not formats.is_supported(name):
             raise HttpError(415, formats.unsupported_message(name))
@@ -203,8 +240,8 @@ class DeidServer(ThreadingHTTPServer):
             src.parent.mkdir()
             src.write_bytes(data)
             with self.work_lock, self.session() as vault:
-                report = formats.process_to_dir(src, Path(td) / "out", self._detector(vault),
-                                                Anonymizer(self.cfg, vault), self.cfg)
+                report = formats.process_to_dir(src, Path(td) / "out", self._detector(vault, cfg),
+                                                Anonymizer(cfg, vault), cfg)
             out = Path(report.output)
             return out.name, out.read_bytes(), report
 
@@ -244,7 +281,18 @@ class _Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
     def _error(self, status: int, message: str) -> None:
-        self._json(status, {"error": message})
+        obj = {"error": message}
+        # only for requests that passed the token check: the message may quote the file
+        warning = self.server.config_warning() if getattr(self, "_authed", False) else None
+        if warning:
+            obj["config_warning"] = warning
+        self._json(status, obj)
+
+    def _result(self, obj: dict) -> None:
+        warning = self.server.config_warning()
+        if warning:
+            obj = dict(obj, config_warning=warning)
+        self._json(200, obj)
 
     # ------------------------------------------------------------------ checks
 
@@ -313,8 +361,11 @@ class _Handler(BaseHTTPRequestHandler):
         has_body = bool(self.headers.get("Transfer-Encoding")) or \
             self.headers.get("Content-Length") not in (None, "0")
         self._body_read = not has_body
+        self._authed = False
         try:
             self._check()
+            self._authed = True
+            self.server.refresh_config()   # config.toml edits apply from this request on
             fn()
         except HttpError as e:
             self._fail(e.status, e.message)
@@ -345,7 +396,10 @@ class _Handler(BaseHTTPRequestHandler):
         if path not in ("/", "/index.html"):
             raise HttpError(404, "없는 주소입니다 (not found)")
         nonce = secrets.token_urlsafe(16)
-        page = (self.server.page.replace("__NONCE__", nonce)
+        warning = self.server.config_warning()
+        page = (self.server.page.replace("__CONFIG_HIDDEN__", "" if warning else " hidden")
+                .replace("__CONFIG_WARNING__", html.escape(warning or ""))
+                .replace("__NONCE__", nonce)
                 .replace("__TOKEN__", self.server.token)
                 .replace("__MAX_MB__", str(MAX_UPLOAD // (1024 * 1024))))
         csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
@@ -357,9 +411,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _post(self) -> None:
         path = urlsplit(self.path).path
         if path == "/api/text":
-            self._json(200, self.server.deid_text(self._json_body()))
+            self._result(self.server.deid_text(self._json_body()))
         elif path == "/api/restore":
-            self._json(200, self.server.restore_text(self._json_body()))
+            self._result(self.server.restore_text(self._json_body()))
         elif path == "/api/file":
             self._file()
         else:
@@ -381,6 +435,9 @@ class _Handler(BaseHTTPRequestHandler):
         info = {"filename": out_name, "counts": dict(sorted(report.counts.items())),
                 "total": report.total, "summary": formats.format_counts(report, self.server.cfg),
                 "warnings": list(report.warnings)}
+        warning = self.server.config_warning()
+        if warning:
+            info["config_warning"] = warning
         ascii_name = "deid-output" + Path(out_name).suffix.encode("ascii", "ignore").decode()
         headers = {
             "Content-Disposition": (f'attachment; filename="{ascii_name}"; '
@@ -531,8 +588,11 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = True, cfg: "Config | No
     except OSError as e:
         print(str(e), file=sys.stderr)
         return 2
-    _say(out, "deid 웹 화면 (local web UI) - 이 컴퓨터에서만 열립니다 (127.0.0.1 only)",
-         f"  {server.url}", "종료: Ctrl-C (press Ctrl-C to stop)")
+    from . import __version__
+
+    _say(out, f"deid {__version__} 웹 화면 (local web UI) - 이 컴퓨터에서만 열립니다 (127.0.0.1 only)",
+         f"  {server.url}", "설정 파일(config.toml)을 고치면 다음 요청부터 적용됩니다. "
+         "deid를 업데이트했다면 껐다가 다시 실행하세요.", "종료: Ctrl-C (press Ctrl-C to stop)")
     old = _stop_on_signals()
     try:
         if open_browser:

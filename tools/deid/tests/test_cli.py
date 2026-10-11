@@ -321,7 +321,7 @@ def test_file_vault_consistent_across_runs(tmp_path, capsys, monkeypatch):
     capsys.readouterr()
     set_stdin(monkeypatch, "[이름2]와 [이름1]".encode())
     assert cli.main(["text", "--restore", "--vault", str(vault)]) == 0
-    assert capsys.readouterr().out == "김민준와 이서연"
+    assert capsys.readouterr().out == "김민준과 이서연"   # particle fitted to the restored name
     monkeypatch.setenv("DEID_VAULT_PASS", "wrong")
     assert cli.main(["file", str(tmp_path / "a.txt"), "--vault", str(vault)]) == 2
     assert "암호가 틀렸거나" in capsys.readouterr().err
@@ -817,7 +817,7 @@ def test_init_config_documents_columns_and_doctor_checks_them(tmp_path, capsys, 
     path.write_text('[columns]\n"담당" = "NOT A TYPE"\n', encoding="utf-8")
     assert cli.main(["doctor"]) == 2
     out = capsys.readouterr().out
-    assert "[XX] 설정 파일 [columns]" in out
+    assert "[XX] 설정 파일" in out and "[columns]" in out   # now refused when the config loads
 
 
 # ---------------------------------------------------------------------- regression: ux fixes

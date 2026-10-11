@@ -114,6 +114,7 @@ FILLERS = {
     "time": lambda r: r.choice(TIMES), "bank": lambda r: r.choice(BANKS), "lab": lab, "vitals": vitals,
     "sexage": sexage, "days": lambda r: str(r.choice([3, 5, 7, 14, 28, 30])),
     "dose": lambda r: f"{r.choice([0.5, 1, 2])}정", "age": lambda r: str(r.randint(2, 90)),
+    "sex": lambda r: r.choice(["F", "M", "여", "남"]),
 }
 
 # --------------------------------------------------------------------------- value generators
@@ -128,6 +129,9 @@ def gen_person(rng: random.Random, variant: str) -> str:
         return f"{rng.choice(EN_FIRST)} {rng.choice(EN_LAST)}"
     if variant == "rom":
         return rng.choice(ROMAN_KO)
+    if variant == "initials":   # "환자 이니셜 K.M.J."
+        letters = [rng.choice("BCDHJKLMPSY") for _ in range(rng.choice([2, 3]))]
+        return rng.choice(["".join(letters), ".".join(letters) + "."])
     surname = rng.choices(SURNAMES, SURNAME_WEIGHTS)[0]
     if variant == "short":
         return rng.choice("김이박최정강조윤장한") + rng.choice(GIVEN1)
@@ -145,6 +149,9 @@ def gen_phone(rng: random.Random, variant: str) -> str:
         return f"{area}-{mid}-{last}"
     if variant == "biz":
         return f"{rng.choice(['1588', '1577', '1661', '1899'])}-{last}"
+    if variant == "url":   # inside a query string: no spaces
+        sep = rng.choice(["-", ""])
+        return f"{pre}{sep}{mid}{sep}{last}"
     sep = rng.choice(["-", "-", "-", ".", " ", ""])
     return f"{pre}{sep}{mid}{sep}{last}"
 
@@ -181,7 +188,16 @@ def gen_rrn(rng: random.Random, variant: str, foreign: bool = False) -> str:
 
 
 def gen_address(rng: random.Random, variant: str) -> str:
+    if variant == "zip":
+        return _digits(rng, 5)
     sido, sgg, roads, emds = rng.choice(ADDRESSES)
+    if variant == "short":   # the value of a 주소/거주지 label without 시/도 or 시/군/구
+        emd = rng.choice(emds)
+        return rng.choice([
+            f"{emd} {rng.choice(['행복', '한빛', '우리', '그린'])}빌라 {rng.randint(1, 5)}0{rng.randint(1, 4)}호",
+            f"{emd} {rng.randint(1, 999)}-{rng.randint(1, 40)}",
+            f"{emd} {rng.choice(APT_NAMES)} {rng.randint(101, 125)}-{rng.randint(1, 25)}0{rng.randint(1, 4)}",
+        ])
     head = f"{sido} {sgg}".strip()
     if variant == "lot":
         lot = f"{rng.randint(1, 1500)}" + (f"-{rng.randint(1, 60)}" if rng.random() < 0.6 else "")
@@ -249,7 +265,10 @@ def gen_account(rng: random.Random, variant: str) -> str:
 def gen_brn(rng: random.Random, variant: str) -> str:
     d9 = str(rng.randint(101, 899)) + _digits(rng, 6)
     s = sum(int(c) * w for c, w in zip(d9, [1, 3, 7, 1, 3, 7, 1, 3, 5])) + int(d9[8]) * 5 // 10
-    d10 = d9 + str((10 - s % 10) % 10)
+    check = (10 - s % 10) % 10
+    if variant == "bad":   # a typo / invented number: wrong check digit
+        check = (check + rng.randint(1, 9)) % 10
+    d10 = d9 + str(check)
     return f"{d10[:3]}-{d10[3:5]}-{d10[5:]}"
 
 
@@ -281,6 +300,10 @@ def gen_birthdate(rng: random.Random, variant: str) -> str:
         return rng.choice([f"{y % 100:02d}년생", f"{y}.{m:02d}.{d:02d}생", f"{y}년생"])
     if variant == "en":
         return rng.choice([f"{m:02d}/{d:02d}/{y}", f"{y}-{m:02d}-{d:02d}", f"{EN_MONTHS[m - 1]} {d}, {y}"])
+    if variant == "hdr":   # chart header "표다은(79.04.05, F)"
+        return rng.choice([f"{y % 100:02d}.{m:02d}.{d:02d}", f"{y}.{m:02d}.{d:02d}", f"{y}-{m:02d}-{d:02d}"])
+    if variant == "ko":
+        return rng.choice([f"{y}년 {m}월 {d}일", f"{y}.{m:02d}.{d:02d}", f"{y}-{m:02d}-{d:02d}"])
     return rng.choice([f"{y}.{m:02d}.{d:02d}", f"{y}-{m:02d}-{d:02d}", f"{y}년 {m}월 {d}일",
                        f"{y % 100:02d}{m:02d}{d:02d}"])
 
@@ -365,6 +388,16 @@ POSITIVE = [
     "{PERSON#a} 학생 결석 확인서: {PERSON#a} 학생은 {DATE}부터 장염으로 결석함.",
     "{PERSON:short} 씨 {~sym}로 {~dept} 내원.",
     "선생님 {PERSON}{~iga} 어제부터 열이 나요. {~lab}",
+    # personal data inside links, chart headers, short labelled addresses (critic gaps)
+    "EMR 링크: https://emr.example/view?name={PERSON}&tel={PHONE:url}",
+    "{PERSON#a} 님 결과지 https://example.org/환자/{PERSON#a}/결과 확인 바랍니다.",
+    "영상 서버 http://{IP}/view?pid={MRN} 에서 확인",
+    "{PERSON}({BIRTHDATE:hdr}, {~sex}) {~sym}로 내원",
+    "{BIRTHDATE:ko} 출생, {~sym}로 내원.",
+    "거주지: {ADDRESS:short}\n보호자 연락처 {PHONE}",
+    "우편번호 {ADDRESS:zip} / 수령인 {PERSON}",
+    "사업자등록번호 {BRN:bad}   대표자 {PERSON}",
+    "환자 이니셜 {PERSON:initials}, {~sexage}, {~dx}",
 ]
 
 NEGATIVE = [

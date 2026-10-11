@@ -96,10 +96,10 @@ _LABEL_WORDS = frozenset(lab.replace(" ", "") for lab in NAME_LABELS if not lab.
 # Common words (mostly clinical) that begin with a surname syllable. A name candidate equal to
 # one of these, or one of these plus a particle/suffix, is never reported.
 STOPWORDS = frozenset("""
-상병 상병명 주상병 부상병 상병코드 진단명 진료일 진료일자 기관명 기관코드 진찰료 진료과목
+상병 상병명 주상병 부상병 상병코드 진단명 진료일 진료일자 기관명 기관코드 진찰료 진료과목 이니셜
 이상 이하 이후 이전 이번 이미 이제 이유 이용 이동 이송 이해 이행 이외 이내 이날 이곳 이쪽 이분
 이들 이것 이런 이름 이야기 이웃 이모 이사 이사장 이번주 이월 이틀 이명 이완 이물 이물감 이식
-이환 이차 이뇨제 이미지 이용자 이민 이상한 이상함 이비인후과 이혼 이전원 이해도
+이환 이차 이뇨제 이미지 이용자 이민 이상한 이상함 이비인후과 이혼 이전원 이해도 이메일 이메일주소
 정상 정도 정기 정보 정확 정밀 정맥 정신 정신과 정형외과 정리 정말 정지 정체 정착 정답 정의 정식
 정오 정원 정부 정책 정형 정상인 정기적 정량 정성 정규 정산 정액 정해진 정정 정상적
 조사 조절 조영 조영제 조기 조금 조치 조직 조심 조언 조건 조정 조제 조합 조회 조무사 조교
@@ -272,9 +272,15 @@ _WORD_RE = re.compile(rf"(?<![가-힣ㄱ-ㅣA-Za-z0-9])[가-힣](?:[가-힣]|{_M
 _SEX = r"(?:남자|여자|남성|여성|[Mm]ale|[Ff]emale|남|여|[MFmf])"
 _AGE = r"(?:만[ ]?)?\d{1,3}[ ]?(?:세|살|개월|y/o|yo|yrs?|[Yy])?"
 _BORN = r"(?:(?:19|20)?\d{2}[ ]?년[ ]?생|(?:19|20)\d{2}[.\-/][01]?\d[.\-/][0-3]?\d[ ]?생)"
+# A birth date in a chart header "표다은(79.04.05, F)", "표다은 (1979.04.05/F)", "(여, 1979-04-05)".
+_DOB = (r"(?:(?:19|20)?\d{2}[.\-/][ ]?[01]?\d[.\-/][ ]?[0-3]?\d\.?|(?:19|20)?\d{6}"
+        r"|(?:19|20)?\d{2}[ ]?년[ ]?[01]?\d[ ]?월[ ]?[0-3]?\d[ ]?일)")
+_AGE_UNIT = r"(?:만[ ]?)?\d{1,3}[ ]?(?:세|살|y/o|yo|yrs?|Y)"
 _PAREN_RE = re.compile(
     rf"[ ]?[(（][ ]*(?:{_SEX}[ ]*[/,·][ ]*{_AGE}|{_AGE}[ ]*[/,·][ ]*{_SEX}"
     rf"|[MF][ ]?\d{{1,3}}|\d{{1,3}}[ ]?[MF]|(?:만[ ]?)?\d{{1,3}}[ ]?세|{_SEX}"
+    rf"|{_DOB}[ ]*[/,·][ ]*(?:{_SEX}|{_AGE_UNIT})(?![A-Za-z가-힣0-9])"
+    rf"|(?:{_SEX}|{_AGE_UNIT})[ ]*[/,·][ ]*{_DOB}(?![0-9])"
     rf"|{_BORN}(?:[ ]*[/,·][ ]*{_SEX})?)"
     r"(?:[ ]*[,;][^()（）\n]{0,40})?[ ]*[)）]"   # "(M/52, #20934411)"
 )
@@ -839,6 +845,11 @@ _VIET_RE = re.compile(
     r"|Dinh|Lam|Mai|Trinh|Dao|Cao|Ha|Ta|Luong|Quach)[ \t]+(?:Thi|Van|Duc|Thanh|Ngoc|Minh|Hong|Quoc|Huu|Xuan"
     r"|Kim|Thu|Anh|Hoang|Gia|Bao)(?:[ \t]+[A-Z][a-z]+){1,2})(?![A-Za-z])"
 )
+# Initials written instead of a name: "환자 이니셜 K.M.J.", "이니셜: KMJ", "initials: K.M."
+_INITIALS_RE = re.compile(
+    r"(?<![가-힣A-Za-z])(?:이니셜|(?i:initials?))[ \t]*(?:[:：=][ \t]*|은[ \t]+|는[ \t]+)?"
+    r"(?P<n>[A-Z]\.(?:[ ]?[A-Z]\.){1,3}|[A-Z]{2,4}(?![A-Za-z]))"
+)
 # Romanized name in parentheses after a Hangul name: "강민서 (Kang Minseo)".
 _HANGUL_PAREN_LATIN_RE = re.compile(
     rf"(?<![가-힣])(?P<ko>[가-힣]{{2,4}})[ ]?[(（][ ]*(?P<n>{_EN_TOKEN}(?:[ \t]+{_EN_TOKEN}){{1,2}})[ ]*[)）]"
@@ -929,6 +940,8 @@ class EnglishNameRecognizer:
                     or _DEGREE_AFTER.match(text, e)):
                 hit((s, e))
         for m in _VIET_RE.finditer(text):
+            hit(m.span("n"))
+        for m in _INITIALS_RE.finditer(text):
             hit(m.span("n"))
         for m in _HANGUL_PAREN_LATIN_RE.finditer(text):
             ko = m.group("ko")

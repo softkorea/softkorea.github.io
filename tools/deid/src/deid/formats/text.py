@@ -340,6 +340,158 @@ def _split_whitespace_ids(text: str, s: int, e: int) -> list[tuple[int, int]]:
     return [(s + a, s + b) for a, b in toks if _DIGIT.search(text[s + a:s + b])]
 
 
+# A run of digits with phone separators ("010-1234-5678", "(02) 123-4567", "+82 10 1234 5678").
+_PHONE_RUN = re.compile(r"(?<![0-9A-Za-z])\+?\(?[0-9](?:[0-9]|[ .()\-]{1,3}(?=[0-9]))*")
+PHONE_RUN_MIN_DIGITS = 7
+# Words that may stand next to a number in a phone cell without being anything else.
+_PHONE_LABELS = frozenset("""
+집 자택 직장 회사 사무실 휴대폰 핸드폰 핸폰 휴대전화 전화 집전화 연락처 비상 비상연락처 대표 대표번호 내선
+팩스 문자 hp h.p tel phone mobile cell home work office fax ext 번 번호
+""".split())
+_PHONE_NEUTRAL = _PHONE_LABELS | RELATION_WORDS
+_WORD = re.compile(r"[^\W\d_]+(?:\.[^\W\d_]+)*")
+
+
+# A number followed by a unit is an amount, not a phone number ("1234567원", "1500000 KRW").
+_AMOUNT_AFTER = re.compile(
+    r"[ ]?(?:원|만[ ]?원|천[ ]?원|억|달러|엔|krw|usd|won|%|(?:회|개|건|명)(?![가-힣]))", re.I)
+
+
+def phone_runs(text: str) -> list[tuple[int, int]]:
+    """(start, end) of the phone-number-like digit runs in `text`: 7+ digits with phone
+    separators that are not a date ("2024-03-15", "1985.03.02") or an amount ("1234567원")."""
+    out = []
+    for m in _PHONE_RUN.finditer(text):
+        s, e = m.start(), m.end()
+        if (len(_DIGIT.findall(text[s:e])) < PHONE_RUN_MIN_DIGITS or date_shaped(text[s:e])
+                or _AMOUNT_AFTER.match(text, e)):
+            continue
+        out.append((s, e))
+    return out
+
+
+def _phone_spans(text: str, s: int, e: int) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """(phone ranges, name ranges) of one piece of a phone cell.
+
+    A piece that is only a number with labels or relation words ("010-1234-5678(본인)", "모
+    010-...", "HP 010-...") is typed whole, as before. In a piece that holds more ("보호자
+    김민준 010-1234-5678", "010-1234-5678 오후에 연락 요망") only the numbers are typed, so the
+    rest is detected like any text instead of being half-masked as a phone number (a phone
+    mask hides digits only); a bare name-shaped word next to the number ("김민준
+    010-...") is typed as a name. A piece without a phone number ("내선 123", an amount)
+    is typed whole, as before."""
+    runs = [(s + a, s + b) for a, b in phone_runs(text[s:e])]
+    if not runs:
+        return [(s, e)], []
+    rest, pos = [], s
+    for a, b in runs:
+        rest.append((pos, a))
+        pos = b
+    rest.append((pos, e))
+    words = [(m.start(), m.end()) for a, b in rest for m in _WORD.finditer(text, a, b)]
+    other = [(a, b) for a, b in words
+             if text[a:b].casefold() not in _PHONE_NEUTRAL]
+    if not other:
+        return _split_whitespace_ids(text, s, e), []
+    phones = [r for a, b in runs for r in _split_whitespace_ids(text, a, b)]
+    names = []
+    if len(other) <= 2:      # a contact entry ("모 김민준 010-..."), not a sentence
+        names = [(a, b) for a, b in other
+                 if not text[a:b].endswith(("번호", "전화", "폰")) and name_shaped(text[a:b])]
+    return phones, names
+
+
+# ---------------------------------------------------------------------------------------------
+# Strict value shapes (cells of a comma-separated "table" found in prose)
+# ---------------------------------------------------------------------------------------------
+#
+# Commas are common in sentences, so a cell of a comma-separated table in plain text is typed
+# only when it is that kind of value. tabular.plausible() is looser on purpose (it only confirms
+# a spreadsheet header and accepts any cell with a few digits): with it, an address line under
+# "생일 3월 15일, 45세" was typed as a birth date and the apartment unit after its comma leaked.
+
+_SHAPE_PAREN = re.compile(r"\([^)]*\)|（[^）]*）|\[[^\]]*\]")
+_SEX_AGE_TAIL = re.compile(
+    r"(?:[ \t]*[/,·][ \t]*|[ \t]+)(?:남자|여자|남성|여성|남|여|[MFmf]|만[ ]?\d{1,3}[ ]?세|\d{1,3}[ ]?(?:세|살))\Z")
+_YEAR_SHAPE = re.compile(r"(?:19|20)\d{2}(?:[ ]?년)?(?:[ ]?생)?|\d{2}[ ]?년[ ]?생")
+_YEAR_MONTH_SHAPE = re.compile(r"(?:19|20)\d{2}(?:[ ]?[-./][ ]?\d{1,2}\.?|[ ]?년[ ]?\d{1,2}[ ]?월(?:[ ]?생)?)")
+_ID_SHAPE = re.compile(r"[A-Za-z0-9#](?:[A-Za-z0-9]|[ ]?[-./][ ]?(?=[A-Za-z0-9])|[ ](?=[A-Za-z0-9]))*")
+_SHORT_WORD = re.compile(r"[가-힣A-Za-z.]{1,8}")
+_EMAIL_SHAPE = re.compile(r"[^\s@,;<>()]+@[^\s@,;<>()]+\.[A-Za-z]{2,}")
+_IPV4_SHAPE = re.compile(r"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?")
+_IPV6_SHAPE = re.compile(r"[0-9A-Fa-f:]{2,39}(?:/\d{1,3})?")
+_PLATE_SHAPE = re.compile(r"(?:[가-힣]{2}[ ]?)?\d{2,3}[ ]?[가-힣][ ]?\d{4}")
+_ID_ENTITIES = frozenset({
+    E.RRN, E.FRN, E.MRN, E.HEALTH_INSURANCE, E.ACCOUNT, E.CARD, E.BRN, E.MEDICAL_LICENSE,
+    E.DRIVER_LICENSE, E.PASSPORT, E.OTHER,
+})
+
+
+def date_shaped(value: Any) -> bool:
+    """A value that is a date and nothing else: "1979-04-05", "79.04.05", "1979년 4월 5일",
+    "3월 15일", "19790405", "1979", "85년생", "1979.04.05 (45세)", "1979-04-05/F"."""
+    import datetime as _dt
+    if isinstance(value, (_dt.date, _dt.datetime)):
+        return True
+    if not isinstance(value, str):
+        return False
+    s = _SHAPE_PAREN.sub(" ", value).strip()
+    s = _SEX_AGE_TAIL.sub("", s).strip().rstrip(".").strip()
+    if not s or len(s) > 30 or not _DIGIT.search(s):
+        return False
+    if _YEAR_SHAPE.fullmatch(s) or _YEAR_MONTH_SHAPE.fullmatch(s):
+        return True
+    try:
+        from ..recognizers.patterns import parse_date
+        y, m, _d = parse_date(s)
+    except Exception:  # noqa: BLE001 - best effort; an unparsable value is no date
+        return False
+    return bool(y or m)
+
+
+def _id_shaped(s: str) -> bool:
+    """One identifier ("12345678", "900101-1234567", "M12345678", "국민 123-45-6789", "No. 4821"),
+    at most with one short word before or after it; not a sentence or an address."""
+    for m in _ID_SHAPE.finditer(s):
+        if len(_DIGIT.findall(m.group())) < 4:
+            continue
+        rest = (s[:m.start()] + " " + s[m.end():]).strip(" \t:#=-")
+        if not rest or (_SHORT_WORD.fullmatch(rest) and not looks_like_address(s)):
+            return True
+    return False
+
+
+def value_shaped(entity: str, value: Any) -> bool:
+    """Is `value` (a cell of a comma-separated table in prose) a value of `entity`?"""
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    if not v or is_null_value(v):
+        return False
+    if entity in (E.BIRTHDATE, E.DATE):
+        return date_shaped(v)
+    if entity == E.PHONE:
+        return bool(phone_runs(v))
+    if entity == E.EMAIL:
+        return bool(_EMAIL_SHAPE.search(v))
+    if entity == E.ADDRESS:
+        return looks_like_address(v)
+    if entity == E.PERSON:
+        parts = [p for p in re.split(r"\s*[/;·]\s*|\s*,\s*", v) if p]
+        return bool(parts) and all(name_shaped(p) for p in parts)
+    core = _SHAPE_PAREN.sub(" ", v).strip()
+    if entity == E.IP:
+        return bool(_IPV4_SHAPE.fullmatch(core) or (":" in core and _IPV6_SHAPE.fullmatch(core)))
+    if entity == E.PLATE:
+        return bool(_PLATE_SHAPE.fullmatch(core))
+    if entity in _ID_ENTITIES:
+        return _id_shaped(core)
+    if entity == E.URL:
+        return "://" in core or core.lower().startswith("www.")
+    # a custom entity from [columns] / [[patterns]]: a short value, not a sentence
+    return len(core.split()) <= 3 and len(core) <= 40 and not looks_like_address(core)
+
+
 # ---------------------------------------------------------------------------------------------
 # Value shapes (used to confirm what a header / label says)
 # ---------------------------------------------------------------------------------------------
@@ -463,13 +615,23 @@ def typed_spans(entity: str, text: str) -> list[Span]:
     else:
         rx = (_PHONE_SPLIT if entity == E.PHONE else _DATE_SPLIT if entity in (E.BIRTHDATE, E.DATE)
               else _ID_SPLIT)
+        names: list[tuple[int, int]] = []
         for s, e in _pieces(text, rx):
             if is_null_value(text[s:e]):
                 continue
-            if entity in (E.PHONE, E.RRN, E.FRN):
+            if entity == E.PHONE:
+                phones, near = _phone_spans(text, s, e)
+                ranges.extend(phones)
+                names.extend(near)
+            elif entity in (E.RRN, E.FRN):
                 ranges.extend(_split_whitespace_ids(text, s, e))
             else:
                 ranges.append((s, e))
+        if names:
+            out = [Span(s, e, entity, text[s:e], TYPED_SCORE, TYPED_SOURCE) for s, e in ranges
+                   if not is_null_value(text[s:e])]
+            out += [Span(s, e, E.PERSON, text[s:e], TYPED_SCORE, TYPED_SOURCE) for s, e in names]
+            return sorted(out, key=lambda x: x.start)
     return [Span(s, e, entity, text[s:e], TYPED_SCORE, TYPED_SOURCE) for s, e in ranges
             if not is_null_value(text[s:e])]
 
@@ -562,9 +724,10 @@ class Batch:
         typed = []
         detect = True
         if entity and self.detector.cfg.is_enabled(entity):
-            typed = typed_spans(entity, text)
+            typed = [sp for sp in typed_spans(entity, text)
+                     if self.detector.cfg.is_enabled(sp.entity)]
             for sp in typed:
-                self.add_known(entity, sp.text)
+                self.add_known(sp.entity, sp.text)
             # Nothing left to find when the typed spans cover all non-space text and their
             # action already hides the whole value (no stronger entity could take over).
             if typed and self._strength(entity) >= FULL_STRENGTH:
@@ -647,32 +810,79 @@ class _SpanIndex:
         return out
 
 
+# A typed span whose action hides less than this ("keep", "mask": a phone mask hides digits
+# only) gives way to a detected span of a stronger entity inside it.
+_HIDES_WHOLE = 2
+_PIECE_TRIM = " \t\r\n,;|/·:()[]{}<>\"'"
+
+
+def _carve(sp: Span, holes: list[tuple[int, int]]) -> list[Span]:
+    """The parts of `sp` outside `holes`, trimmed of spaces and separators; parts without a
+    letter or digit are dropped."""
+    out: list[Span] = []
+    pos = sp.start
+    for a, b in sorted(holes) + [(sp.end, sp.end)]:
+        s, e = pos, min(max(a, pos), sp.end)
+        while s < e and sp.text[s - sp.start] in _PIECE_TRIM:
+            s += 1
+        while e > s and sp.text[e - 1 - sp.start] in _PIECE_TRIM:
+            e -= 1
+        piece = sp.text[s - sp.start:e - sp.start]
+        if s < e and any(ch.isalnum() for ch in piece):
+            out.append(Span(s, e, sp.entity, piece, sp.score, sp.source))
+        pos = max(pos, b)
+    return out
+
+
 def merge_typed(typed: list[Span], detected: list[Span],
                 strength: Callable[[str], int] | None = None) -> list[Span]:
     """Typed spans win over overlapping detected spans, unless a detected span of another
     entity covers the whole typed span and its action hides more (all typed spans of one
-    value share one entity, so a promoted span replaces every typed span inside it)."""
+    value share one entity, so a promoted span replaces every typed span inside it).
+
+    With `strength`, two more rules keep a typed cell from hiding what detection found:
+    a typed span whose action does not hide the whole value (keep, mask) gives way to a
+    detected span of an entity that hides more inside it ("보호자 김민준 010-..." typed as a
+    phone keeps the name for the detector), and a detected span that runs past the typed
+    spans it overlaps keeps its part outside them (an address split by the comma of a
+    pasted CSV row: the unit after the comma is still masked)."""
     chosen: list[Span] = []
     seen: set[int] = set()
     det = _SpanIndex(detected) if strength is not None and detected else None
     typ = _SpanIndex(typed) if det is not None else None
     for t in typed:
         pick = t
-        if det is not None and typ is not None:
-            for sp in det.overlapping(t.start, t.end):
+        if det is not None and typ is not None and strength is not None:
+            over = det.overlapping(t.start, t.end)
+            for sp in over:
                 if (_covers(sp, t) and sp.entity != t.entity
                         and strength(sp.entity) > strength(t.entity)
                         and all(_covers(sp, o) for o in typ.overlapping(sp.start, sp.end))):
                     pick = sp
                     break
+            if pick is t and over and strength(t.entity) < _HIDES_WHOLE:
+                holes = [(sp.start, sp.end) for sp in over
+                         if sp.entity != t.entity and strength(sp.entity) > strength(t.entity)]
+                if holes:
+                    chosen.extend(_carve(t, holes))
+                    continue
         if id(pick) not in seen:
             seen.add(id(pick))
             chosen.append(pick)
     taken = _SpanIndex(chosen)
+    extra: list[Span] = []
     for sp in detected:
-        if not taken.overlapping(sp.start, sp.end):
-            chosen.append(sp)
-    return sorted(chosen, key=lambda x: x.start)
+        hits = taken.overlapping(sp.start, sp.end)
+        if not hits:
+            extra.append(sp)
+        elif strength is not None and not any(_covers(h, sp) for h in hits):
+            extra.extend(_carve(sp, [(h.start, h.end) for h in hits]))
+    out: list[Span] = []
+    for sp in sorted(chosen + extra, key=lambda x: (x.start, -x.end)):
+        if out and sp.start < out[-1].end:
+            continue        # never hand overlapping spans to the anonymizer
+        out.append(sp)
+    return out
 
 
 def numeric_text(value: Any, entity: str | None) -> str | None:
@@ -813,7 +1023,7 @@ def table_spans(text: str, cfg: "Config | None" = None) -> list[Span]:
     separated rows only under a recognised header row). Offsets refer to `text`."""
     if "\t" not in text and "," not in text:
         return []
-    from .tabular import ColumnPolicy, SKIP, TEXT, build_layout, column_overrides, plausible
+    from .tabular import ColumnPolicy, SKIP, TEXT, build_layout, column_overrides
     try:
         policy = ColumnPolicy(column_overrides(cfg))
     except ValueError:
@@ -838,7 +1048,7 @@ def table_spans(text: str, cfg: "Config | None" = None) -> list[Span]:
                     kind = layout.kind(i, j)
                     if kind in (None, SKIP, TEXT) or s >= e:
                         continue
-                    if delim == "," and not _csv_cell_fits(kind, text[s:e], plausible):
+                    if delim == "," and not _csv_cell_fits(kind, text[s:e]):
                         continue   # prose with commas under a header-like line: need value shape
                     for sp in typed_spans(kind, text[s:e]):
                         out.append(Span(s + sp.start, s + sp.end, sp.entity, sp.text, sp.score,
@@ -852,18 +1062,14 @@ def table_spans(text: str, cfg: "Config | None" = None) -> list[Span]:
     return merged
 
 
-def _csv_cell_fits(kind: str, cell: str, plausible: Callable[[str, Any], bool]) -> bool:
+def _csv_cell_fits(kind: str, cell: str) -> bool:
     """A cell of a comma-separated table found in plain text is typed only when its value
-    looks like that kind of value: commas are common in prose, and a sentence line under
-    "이름, 나이, 성별 확인함" must not be erased as a name. (TSV rows copied from a
+    has the shape of that kind of value (value_shaped): commas are common in prose, and a
+    sentence line under "이름, 나이, 성별 확인함" must not be erased as a name, nor an
+    address line under "생일 3월 15일, 45세" typed as a birth date. (TSV rows copied from a
     spreadsheet keep the header-only rule, like a .tsv file.)"""
     v = cell.strip().strip('"').strip()
-    if not v:
-        return False
-    if kind == E.PERSON:
-        parts = [p for p in re.split(r"\s*[/;·]\s*|\s*,\s*", v) if p]
-        return bool(parts) and all(name_shaped(p) for p in parts)
-    return plausible(kind, v)
+    return bool(v) and value_shaped(kind, v)
 
 
 def _text_slots(text: str, batch: Batch) -> list[str]:
@@ -1388,7 +1594,7 @@ class _Markup:
                 entity = None if kind in (None, "skip", "text") else kind
                 if entity and len(cell) > 1:   # "<b>홍길동</b> 님": register the names, check pieces
                     for sp in typed_spans(entity, texts.get(r, {}).get(c, "")):
-                        self.batch.add_known(entity, sp.text)
+                        self.batch.add_known(sp.entity, sp.text)
                     entity = None
                 for idx, raw, decode, escape in cell:
                     self._register(idx, raw, decode, escape, entity)

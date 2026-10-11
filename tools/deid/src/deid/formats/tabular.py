@@ -163,6 +163,9 @@ _DIGITS = re.compile(r"[0-9]")
 _DIGIT_RUN = re.compile(r"[0-9]{3}")
 _TRAILING_NUMBER = re.compile(r"[0-9]+$")
 LOOSE_HEADER_CHARS = 14
+# A date or age inside a cell makes it a label with its value ("생일 3월 15일", "만 45세 보호자"),
+# not a column header.
+_VALUE_IN_HEADER = re.compile(r"[0-9]+(?:년|월|일|세|살|시|분)")
 
 
 def normalize_header(text: Any) -> str:
@@ -190,7 +193,8 @@ def column_entity(header: Any) -> str | None:
     if hit:
         return hit
     # Looser rules only for short header-like text ("2024-03-03 전화", sentences are not headers).
-    if len(n) > LOOSE_HEADER_CHARS or len(header.split()) > 4 or _DIGIT_RUN.search(n):
+    if (len(n) > LOOSE_HEADER_CHARS or len(header.split()) > 4 or _DIGIT_RUN.search(n)
+            or _VALUE_IN_HEADER.search(n)):
         return None
     for sub, ent in CONTAINS_HEADERS:
         if sub in n:

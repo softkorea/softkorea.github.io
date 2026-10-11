@@ -104,6 +104,7 @@ _COMPLEX_TOKEN = re.compile(rf"[가-힣A-Za-z0-9{re.escape(_MASK)}]{{2,15}}")
 _NOT_COMPLEX = frozenset("""
 주소 주소는 주소지 현주소 자택 거주지 집 저희 저희집 우리 우리집 본가 친정 시댁 택배 배송지 방문 현재 지금
 이사 새 새집 옛 예전 전 원래 거기 여기 그 이 저 같은 동 호 단지 아파트
+동행 동안 동생 동반 동의 동석 동거 동일 동시 동네 님 씨 환자 보호자 거주 거주중 거주하는 거주하며 사는 살고
 """.split())
 _PARTICLE_FINALS = frozenset("은는을를에의와과랑께서도")
 # A unit inside an office / hospital building is a room, not a home: "OO타워 3동 201호".
@@ -131,6 +132,178 @@ _EN_ADDR_RE = re.compile(
     r"(?:,?[ ]+(?:Suite|Ste\.?|Apt\.?|Apartment|Unit|Floor|Fl\.?|#)[ ]?[0-9A-Za-z-]{1,8})?"
     r"(?:,[ ]+[A-Z][a-z]+(?:[ ][A-Z][a-z]+)?(?:,?[ ]+[A-Z]{2})?(?:[ ]+\d{5}(?:-\d{4})?)?)?(?![A-Za-z0-9])"
 )
+
+# Units of a residential building without the 동/호 words: "행복빌라 302호", "행복아파트 102-1501",
+# "102-1501 행복아파트". Offices ("OO빌딩 302호") and wards are not homes.
+_HOME_BLDG = ("빌라", "맨션", "아파트", "APT", "apt", "오피스텔", "하이츠", "빌리지", "연립", "다세대", "주공",
+              "타운", "하우스", "캐슬", "팰리스", "레지던스")
+_HOME_NAME = rf"(?:[가-힣A-Za-z0-9{re.escape(_MASK)}]{{1,12}}?[ ]?(?:{_alt(_HOME_BLDG)})|[가-힣]{{2,10}}빌)"
+_HOME_UNIT_RE = re.compile(
+    rf"(?<![가-힣A-Za-z0-9]){_HOME_NAME}[ ]?(?:\d{{1,4}}[ ]?동[ ]?)?"
+    r"(?:\d{1,5}[ ]?호|\d{2,4}-\d{3,5}(?:[ ]?호)?)(?![0-9])(?!-[0-9])")
+_DASH_UNIT_HOME_RE = re.compile(
+    rf"(?<![0-9A-Za-z-])\d{{2,4}}-\d{{3,5}}(?:[ ]?호)?[ ]?{_HOME_NAME}(?![A-Za-z0-9])")
+
+# Postal codes after their label: "우편번호 13561", "(우) 06236", "Zip 97205".
+_POSTAL_RE = re.compile(
+    r"(?:우편[ ]?번호|[(（]우[)）]|(?<![가-힣])우\)|(?i:\bzip(?:[ ]?code)?|\bpost(?:al)?[ ]?code))"
+    r"[ \t]*[:：.]?[ \t]*(?P<v>\d{5}|\d{3}-\d{3})(?![0-9])(?!-[0-9])")
+# "(06236) 서울특별시 강남구 ...": a postal code in brackets right before an address.
+_POSTAL_BEFORE = re.compile(r"[(（\[]\d{5}[)）\]][ ]?\Z")
+
+# --- label-driven addresses: "주소: 정자동 행복아파트 102-1501", "거주지: 용봉동 행복빌라 302호",
+# "주소는 아직 광주 북구 용봉동 그대로세요?". After an explicit label the value is read token by
+# token: from the first address word (within the first three words) as long as words are
+# address parts. '주소' is also the chart word for the chief complaint, so a value needs a real
+# address feature ("주소: 두통", "주소: 안면 마비", "주소: 허리 통증" stay).
+_ADDR_LABEL_RE = re.compile(
+    r"(?<![가-힣A-Za-z])"
+    r"(?:(?:현|실|새|구|자택|집|본가|친정|환자의?|보호자의?|신분증|등본상?|택배[ ]?받을|우편[ ]?받을|받을|배송|"
+    r"방문간호|방문진료)[ ]?)?"
+    r"(?:주소지?|거주지|거주[ ]?지역|사는[ ]?곳|송부지|배송지|수령지|자택|(?i:address|addr\.?))"
+    r"(?:[ ]?[(（][^()（）\n]{0,12}[)）])?"
+    r"(?:[ \t]*[:：=][ \t]*|[ \t]*(?:는|은)[ \t]+|[ \t]+)"
+)
+_VALUE_END_RE = re.compile(r"\n|\t|[|;]|[ ]{3,}|[ ]/[ ]|[ ]?(?:연락처|전화|휴대폰|핸드폰|이메일|보호자|생년월일)[ ]?[:：]")
+_VAL_TOKEN_RE = re.compile(r"[^\s,/|;]+")
+_TOKEN_EDGE = "()（）[]'\"“”‘’.,!?~·"
+_TOKEN_SUFFIXES = tuple(sorted(
+    "이에요 에요 예요 입니다 이요 요 에서 에 으로 로 이고 이며 이다 인데 이라 은 는 이 가 을 를 의 도 까지 쯤 근처 "
+    "이구요 구요 고요".split(), key=len, reverse=True))
+_EMD_TOKEN = re.compile(r"[가-힣]{1,5}\d{0,2}(?:동|읍|면)|[가-힣]{1,4}\d{1,2}가")
+_RI_TOKEN = re.compile(r"[가-힣]{1,5}리")
+_ROAD_TOKEN = re.compile(r"[가-힣][가-힣0-9]{0,10}(?:로|길)(?:\d{1,4}번?[가-하]?길)?")
+_ROAD_NUM_TOKEN = re.compile(r"[가-힣][가-힣0-9]{0,10}(?:로|길)\d{1,5}(?:-\d{1,5})?")
+_NUM_TOKEN = re.compile(r"(?:산)?\d{1,5}(?:-\d{1,5})?(?:번지)?")
+_HOME_UNIT_TOKEN = re.compile(r"\d{3,5}호|\d{2,4}-\d{3,5}호")
+_UNIT_TOKEN = re.compile(
+    r"\d{1,4}동|\d{1,5}호|\d{2,4}-\d{3,5}호|(?:지하|B)?\d{1,3}층|\d{1,2}(?:차|단지)|[A-Z]?\d{1,3}블록")
+# Words that look like 동/면/읍 names but are clinical or everyday words.
+_EMD_STOP_SUFFIXES = (
+    "행동", "운동", "활동", "박동", "변동", "충동", "이동", "진동", "작동", "노동", "감동", "아동", "파동", "연동",
+    "유동", "자동", "수동", "기동", "출동", "발동", "구동", "율동", "협동", "공동", "합동", "요동", "난동", "부동",
+    "수면", "불면", "안면", "측면", "전면", "후면", "정면", "표면", "내면", "이면", "단면", "반면", "장면",
+    "화면", "대면", "직면", "체면", "방면", "국면", "라면", "냉면", "평면", "지면", "곡면", "외면", "양면",
+    "앞면", "뒷면", "옆면", "윗면", "하면", "되면", "보면", "가면", "오면", "나면", "서면", "으면", "우면",
+)
+
+
+def _token_kind(tok: str) -> str | None:
+    """Address role of one value word, or None (see _label_spans)."""
+    if tok in _SIDO_SET:
+        return "sido"
+    if tok in SIGUNGU:
+        return "sgg"
+    if _SGG_GENERIC_RE.fullmatch(tok):
+        return "sgg2"
+    if _EMD_TOKEN.fullmatch(tok):
+        return None if tok.endswith(_EMD_STOP_SUFFIXES) else "emd"
+    if _RI_TOKEN.fullmatch(tok):
+        return "ri"
+    if _NUM_TOKEN.fullmatch(tok):
+        return "num"
+    if _UNIT_TOKEN.fullmatch(tok):
+        return "unit"
+    if _ROAD_NUM_TOKEN.fullmatch(tok):
+        return "roadnum"
+    if _ROAD_TOKEN.fullmatch(tok):
+        return "road"
+    if tok.endswith(_BUILDING) or (len(tok) >= 3 and tok.endswith("빌")):
+        return "bldg"
+    if _COMPLEX_TOKEN.fullmatch(tok):
+        return "word"
+    return None
+
+
+def _classify(tok: str) -> tuple[str | None, int, int]:
+    """(kind, start, end) of the address part of a value word: edge punctuation and a trailing
+    particle or copula are left out ("(합정동),", "1904호요." -> "합정동", "1904호")."""
+    lead = len(tok) - len(tok.lstrip(_TOKEN_EDGE))
+    core = tok.strip(_TOKEN_EDGE)
+    for _ in range(3):
+        if not core:
+            return None, lead, lead
+        kind = _token_kind(core)
+        if kind is not None and kind != "word":
+            break
+        stripped = None
+        for suf in _TOKEN_SUFFIXES:
+            if core.endswith(suf) and len(core) > len(suf):
+                stripped = core[: -len(suf)].rstrip(_TOKEN_EDGE)
+                break
+        if stripped is None or _token_kind(stripped) in (None, "word"):
+            break
+        core = stripped
+    return _token_kind(core), lead, lead + len(core)
+
+
+def _label_spans(text: str) -> list[tuple[int, int, float]]:
+    """Address values after an explicit 주소/거주지/자택 label."""
+    out: list[tuple[int, int, float]] = []
+    for m in _ADDR_LABEL_RE.finditer(text):
+        vs = m.end()
+        e = _VALUE_END_RE.search(text, vs)
+        ve = e.start() if e else len(text)
+        toks = [(t.start(), t.group()) for t in _VAL_TOKEN_RE.finditer(text, vs, ve)]
+        if not toks:
+            continue
+        rng = _address_run(toks, [_classify(t) for _, t in toks])
+        if rng:
+            out.append((rng[0], rng[1], 0.85))
+    return out
+
+
+def _address_run(toks: list[tuple[int, str]],
+                 kinds: list[tuple[str | None, int, int]]) -> tuple[int, int] | None:
+    """The address words among the first words of a labelled value, as (start, end)."""
+    n = len(toks)
+
+    def kind(i: int) -> str | None:
+        return kinds[i][0] if 0 <= i < n else None
+
+    def core(i: int) -> str:
+        return toks[i][1][kinds[i][1]:kinds[i][2]] if 0 <= i < n else ""
+
+    def home_unit(i: int) -> bool:   # "302호", "102-1501호" (not "1호", "2층")
+        return kind(i) == "unit" and _HOME_UNIT_TOKEN.fullmatch(core(i)) is not None
+
+    def dong_unit(i: int) -> bool:   # "101동"
+        return kind(i) == "unit" and core(i).endswith("동")
+
+    def starts(i: int) -> bool:
+        k, nxt = kind(i), kind(i + 1)
+        if k == "sido":
+            return core(i) != "경기" or nxt in ("sgg", "sgg2")  # 경기 is also a seizure
+        if k == "emd":
+            return len(core(i)) >= 3 or nxt in ("num", "unit", "bldg", "word", "ri")
+        if k in ("ri", "road"):
+            return nxt == "num"
+        if k in ("sgg", "roadnum", "bldg"):
+            return True
+        if k == "unit":
+            return home_unit(i) or (dong_unit(i) and home_unit(i + 1))
+        if k == "num":
+            return nxt == "bldg" and "-" in core(i)
+        if k == "word":
+            return nxt == "bldg" or home_unit(i + 1) or (dong_unit(i + 1) and home_unit(i + 2))
+        return False
+
+    for i in range(min(3, n)):
+        if starts(i):
+            break
+    else:
+        return None
+    j = i
+    while j + 1 < n:
+        k = kind(j + 1)
+        if k is None or (k == "word" and kind(j + 2) not in ("unit", "bldg", "num")):
+            break
+        j += 1
+        if kinds[j][2] < len(toks[j][1].rstrip(_TOKEN_EDGE)):
+            break   # "1904호요": the particle ends the address
+    start, end = toks[i][0] + kinds[i][1], toks[j][0] + kinds[j][2]
+    return (start, end) if end > start else None
+
 
 # What may directly follow a building/lot number without breaking the address.
 _NUM_FOLLOWERS = frozenset({
@@ -175,11 +348,22 @@ class AddressRecognizer:
                 continue
             out.append(make_span(text, m.start(), m.end(), ADDRESS, 0.85, self.name))
         ranges = [(sp.start, sp.end, sp.score) for sp in out]
+        for i, (s, e, sc) in enumerate(ranges):   # "(06236) 서울특별시 강남구 ..."
+            pm = _POSTAL_BEFORE.search(text, max(0, s - 9), s)
+            if pm:
+                ranges[i] = (pm.start(), e, sc)
         if "호" in text:
             for m in _UNIT_RE.finditer(text):
                 if _NON_HOME_BEFORE.search(text, max(0, m.start() - 12), m.start()):
                     continue
                 ranges.append((self._extend_left(text, m.start()), m.end(), 0.85))
+        if _HAS_DIGIT.search(text):
+            for rx in (_HOME_UNIT_RE, _DASH_UNIT_HOME_RE):
+                for m in rx.finditer(text):
+                    ranges.append((self._extend_left(text, m.start()), m.end(), 0.85))
+            for m in _POSTAL_RE.finditer(text):
+                ranges.append((m.start("v"), m.end("v"), 0.85))
+        ranges += _label_spans(text)
         if _HAS_UPPER.search(text) and _HAS_DIGIT.search(text):
             for rx in (_ROMAN_RE, _EN_ADDR_RE):
                 for m in rx.finditer(text):
@@ -197,6 +381,7 @@ class AddressRecognizer:
         toks = list(_TOKEN_RE.finditer(seg))
         complexes = 0
         new_start = start
+        admin_seen = False
         for i, t in enumerate(reversed(toks)):
             word = t.group()
             glued = i == 0 and t.end() == len(seg)          # "센텀파크102동"
@@ -204,7 +389,10 @@ class AddressRecognizer:
                 break
             if _ADMIN_TOKEN.fullmatch(word) and not glued and not (word[-1] == "리" and len(word) < 3):
                 new_start = base + t.start()
+                admin_seen = True
                 continue
+            if admin_seen:
+                break   # addresses run from the larger area to the smaller: nothing before 시/구
             if complexes >= 3 or not _COMPLEX_TOKEN.fullmatch(word):
                 break
             if word[-1] in _PARTICLE_FINALS and not glued:
@@ -243,11 +431,14 @@ def _union(ranges: list[tuple[int, int, float]]) -> list[tuple[int, int, float]]
 _TOKEN_SPLIT = re.compile(r"[\s,]+")
 _SIDO_SET = frozenset(SIDO)
 _SGG_GENERIC_RE = re.compile(r"[가-힣]{1,5}(?:시|군|구)")
+_POSTAL_TOKEN = re.compile(r"[(（\[]?(?:\d{5}|\d{3}-\d{3})[)）\]]?")
 
 
 def generalize_address(text: str) -> str:
     """The 시/도 + 시/군/구 prefix ("서울 강남구 테헤란로 123" -> "서울 강남구"), or ""."""
     toks = [t for t in _TOKEN_SPLIT.split(text.strip()) if t]
+    while toks and _POSTAL_TOKEN.fullmatch(toks[0]):   # "(06236) 서울특별시 강남구 ..."
+        toks.pop(0)
     parts: list[str] = []
     if toks and toks[0] in _SIDO_SET:
         parts.append(toks.pop(0))

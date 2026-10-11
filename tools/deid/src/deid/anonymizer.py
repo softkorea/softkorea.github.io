@@ -93,8 +93,14 @@ def _mask_person(value: str) -> str:
     return _mask_ends(value)  # 김민준 -> 김*준, 이수 -> 이*
 
 
+# Spoken digits ("공일공-4321-8765") are masked like their numeric form, so the two
+# spellings of one number never reveal different groups.
+_HANGUL_DIGITS = str.maketrans("공영일이삼사오육칠팔구", "00123456789")
+
+
 def _mask_phone(value: str) -> str:
-    groups = list(_DIGITS.finditer(value))
+    view = value.translate(_HANGUL_DIGITS)
+    groups = list(_DIGITS.finditer(view))
     if not groups:
         return _mask_ends(value)
     if len(groups) >= 2:  # 010-****-5678, +82 10-****-5678, 1588-****
@@ -102,7 +108,7 @@ def _mask_phone(value: str) -> str:
         hide = set(range(*target.span()))
     else:  # 01012345678 -> 010****5678
         s, e = groups[0].span()
-        head = 2 if value.startswith("02", s) else 3
+        head = 2 if view.startswith("02", s) else 3
         lo = s + head if e - s - 4 > head else s
         hide = set(range(lo, max(lo, e - 4)))
     return "".join("*" if i in hide else ch for i, ch in enumerate(value))

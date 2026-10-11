@@ -9,6 +9,11 @@ the de-identified output name and counts only, failures show a masked name ("김
 and an error text with every path and name removed, and notifications (lock screen) show
 counts only. IN and OUT are created owner-only (0700), and each pass also deletes an expired
 clipboard session (see :func:`deid.session.purge_expired_session`).
+
+Settings follow the config file (:class:`LiveConfig`): each pass checks its modification time,
+size and inode and re-reads it when they changed, so names added to ``names`` reach a watcher
+that has been running since login. A file that no longer loads keeps the previous settings and
+is reported once (log line, and a notification without details with ``notify``).
 """
 from __future__ import annotations
 
@@ -39,6 +44,144 @@ DEFAULT_INTERVAL = 2.0
 PENDING, DONE, FAILED, SKIPPED = "pending", "done", "failed", "skipped"
 
 Log = Callable[[str], None]
+
+
+# ---------------------------------------------------------------------- live config
+
+
+def config_error_text(e: BaseException, path: str | os.PathLike | None = None) -> str:
+    """The message of a config loading error (Korean, from deid.config), in full."""
+    if isinstance(e, FileNotFoundError):
+        shown = path if path is not None else (e.filename or "")
+        return f"설정 파일을 찾을 수 없습니다 (config file not found): {shown}"
+    text = str(e).strip()
+    if not text:
+        return type(e).__name__
+    if isinstance(e, ValueError):
+        return " ".join(text.split())[:2000]
+    return f"{text.splitlines()[0][:400]} ({type(e).__name__})"
+
+
+def config_location(path: str | os.PathLike | None = None) -> tuple[Path, bool]:
+    """(file, explicit) for `path` or the default config location, also when it does not exist
+    yet (so creating it later is noticed). `explicit` is True for --config and DEID_CONFIG,
+    whose file must exist; the default file is optional."""
+    if path is not None:
+        return Path(path).expanduser(), True
+    env = os.environ.get("DEID_CONFIG")
+    if env:
+        return Path(env).expanduser(), True
+    return Path("~/.config/deid/config.toml").expanduser(), False
+
+
+@dataclass
+class ConfigChange:
+    """What :meth:`LiveConfig.refresh` found: new settings in use (`ok`) or a file that does
+    not load (the previous settings stay in use; `message` says why)."""
+
+    ok: bool
+    message: str
+    problems: list[str] = field(default_factory=list)   # soft warnings of the new file
+
+
+class LiveConfig:
+    """A Config that follows its file.
+
+    :meth:`refresh` stats the file (modification time, size, inode, change time - an editor
+    that saves by renaming counts too) and re-reads it only when that changed. A file that
+    no longer loads (syntax error, unknown key, deleted --config file) keeps the previous
+    settings; `error` holds the reason until a later version of the file loads. The default
+    file (~/.config/deid/config.toml) may also appear or disappear (-> default settings).
+    """
+
+    def __init__(self, path: str | os.PathLike | None = None, cfg: "Config | None" = None, *,
+                 follow: bool = True) -> None:
+        self.path, self.explicit = config_location(path)
+        self.follow = follow
+        self.error: str | None = None
+        self.generation = 0
+        self._lock = threading.Lock()
+        self._sig = self._signature() if follow else None
+        if cfg is None:
+            from .config import default_config, load_config
+
+            if not follow:
+                cfg = load_config()
+            elif self.explicit or self._sig is not None:
+                cfg = load_config(self.path)    # raises: a bad file at start is an error
+            else:
+                cfg = default_config()
+        self.cfg = cfg
+
+    @classmethod
+    def static(cls, cfg: "Config") -> "LiveConfig":
+        """Fixed settings that never reload (a Config handed in by a caller)."""
+        return cls(cfg=cfg, follow=False)
+
+    def _signature(self) -> tuple | None:
+        try:
+            st = os.stat(self.path)
+        except FileNotFoundError:
+            return None
+        except OSError as e:   # unreadable: loading will say why
+            return ("error", type(e).__name__)
+        return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
+
+    def refresh(self) -> ConfigChange | None:
+        """Re-read the file when it changed. None when nothing changed."""
+        if not self.follow:
+            return None
+        with self._lock:
+            sig = self._signature()
+            if sig == self._sig:
+                return None
+            self._sig = sig     # taken before reading: a write still going on shows up next time
+            from .config import default_config, load_config
+
+            try:
+                if sig is None and not self.explicit:
+                    cfg = default_config()    # the optional default file was removed
+                else:
+                    cfg = load_config(self.path)
+            except Exception as e:  # noqa: BLE001 - keep working with the previous settings
+                self.error = config_error_text(e, self.path)
+                return ConfigChange(False, self.error)
+            self.cfg = cfg
+            self.error = None
+            self.generation += 1
+            problems: list[str] = []
+            if sig is not None:
+                try:
+                    from . import config as config_mod
+
+                    report = getattr(config_mod, "validate_report", None)
+                    problems = list(report(self.path)) if report else []
+                except Exception:  # noqa: BLE001 - warnings are a bonus
+                    problems = []
+            return ConfigChange(True, "설정 파일을 다시 읽었습니다 (config reloaded)"
+                                if sig is not None else
+                                "설정 파일이 없어져 기본 설정을 씁니다 (config file removed: defaults)",
+                                problems)
+
+
+def _log_config_change(change: ConfigChange, log: "Log", notify: bool) -> None:
+    if change.ok:
+        log(change.message)
+        for p in change.problems:
+            log(f"   ! 설정 확인 필요 (config warning): {p}")
+        return
+    log("! 설정 파일 오류 - 고칠 때까지 이전 설정으로 계속 처리합니다 (config error: keeping the "
+        f"previous settings): {change.message}")
+    if notify:   # lock screen: no details (the config file holds names)
+        from . import mac
+        try:
+            mac.notify("deid 감시: 설정 파일 오류",
+                       "이전 설정으로 계속 처리합니다 - deid doctor로 확인하세요")
+        except Exception:  # noqa: BLE001 - a notification never stops the watcher
+            pass
+
+
+# ---------------------------------------------------------------------- watcher
 
 
 def _default_log(msg: str) -> None:
@@ -300,12 +443,15 @@ def watch_once(state: WatchState, in_dir: str | os.PathLike, out_dir: str | os.P
 
 
 def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
-              interval: float = DEFAULT_INTERVAL, cfg: "Config | None" = None,
+              interval: float = DEFAULT_INTERVAL, cfg: "Config | LiveConfig | None" = None,
               notify: bool = False, log: Log | None = None,
               stop: threading.Event | None = None, state_path: str | os.PathLike | None = None,
               max_passes: int | None = None) -> int:
-    """Poll forever (until Ctrl-C, `stop` is set or `max_passes`). Returns an exit code."""
-    from .config import load_config
+    """Poll forever (until Ctrl-C, `stop` is set or `max_passes`). Returns an exit code.
+
+    `cfg`: a :class:`LiveConfig` (re-read when its file changes; `deid watch` passes one),
+    None (the default config file, followed the same way) or a fixed Config.
+    """
     from .session import prepare_work_dir, purge_expired_session
     from .vault import Vault
 
@@ -326,18 +472,33 @@ def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
             return 2
     except OSError:  # pragma: no cover
         pass
-    cfg = cfg if cfg is not None else load_config()
+    if isinstance(cfg, LiveConfig):
+        live = cfg
+    elif cfg is None:
+        try:
+            live = LiveConfig()
+        except Exception as e:  # noqa: BLE001
+            log(f"설정 파일 오류 (config error): {config_error_text(e)}")
+            return 2
+    else:
+        live = LiveConfig.static(cfg)
     state = WatchState.load(state_path if state_path is not None
                             else state_path_for(in_dir, out_dir))
     vault = Vault()
     interval = max(0.2, float(interval))
-    log(f"감시 시작 (watching): {in_dir} -> {out_dir}, {interval:g}초 간격. 종료: Ctrl-C")
+    from . import __version__
+
+    log(f"감시 시작 (watching, deid {__version__}): {in_dir} -> {out_dir}, {interval:g}초 간격. "
+        "설정 파일을 고치면 다음 확인 때 다시 읽습니다. 종료: Ctrl-C")
     passes = 0
     try:
         while True:
             purge_expired_session()   # the session must not outlive its expiry on disk
+            change = live.refresh()   # names added to config.toml apply from this pass on
+            if change is not None:
+                _log_config_change(change, log, notify)
             try:
-                watch_once(state, in_dir, out_dir, cfg, vault=vault, log=log, notify=notify)
+                watch_once(state, in_dir, out_dir, live.cfg, vault=vault, log=log, notify=notify)
                 state.save()
             except OSError as e:  # e.g. IN temporarily unavailable (network/sync folder)
                 log(f"폴더를 읽을 수 없습니다 (cannot read folder): {type(e).__name__}")
@@ -360,4 +521,5 @@ def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
     return 0
 
 
-__all__ = ("WatchState", "watch_once", "run_watch", "scan", "file_key", "state_path_for")
+__all__ = ("WatchState", "watch_once", "run_watch", "scan", "file_key", "state_path_for",
+           "LiveConfig", "ConfigChange", "config_error_text", "config_location")
