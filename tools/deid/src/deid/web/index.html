@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>deid 비식별화</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6676; --line: #d9dde4;
+    --accent: #2457c5; --accent-text: #ffffff; --ok: #1d7a46; --warn: #9a5b00; --err: #b3261e;
+    --drop: #eef3ff; --notice: #fff6e0; --notice-line: #f0d48a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1d2128; --text: #e7eaf0; --muted: #9aa3b2; --line: #343a45;
+      --accent: #6e9bff; --accent-text: #0d1220; --ok: #5fd08f; --warn: #f0b85a; --err: #ff8a80;
+      --drop: #1f2838; --notice: #2b2616; --notice-line: #5c4c1d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic",
+          "Noto Sans KR", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  header h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--muted); font-size: .92rem; }
+  .notice {
+    margin: 16px 0; padding: 12px 14px; border-radius: 10px; background: var(--notice);
+    border: 1px solid var(--notice-line); font-size: .95rem;
+  }
+  section {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-top: 18px;
+  }
+  section h2 { font-size: 1.1rem; margin: 0 0 10px; }
+  label.hint { display: block; color: var(--muted); font-size: .9rem; margin-bottom: 8px; }
+  textarea {
+    width: 100%; min-height: 300px; resize: vertical; padding: 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    font: 15px/1.6 ui-monospace, "SF Mono", Menlo, "D2Coding", monospace;
+  }
+  textarea:focus, button:focus-visible, .drop:focus-visible {
+    outline: 3px solid var(--accent); outline-offset: 2px;
+  }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  button {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 10px 18px; border-radius: 8px; font-size: 1rem; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button:disabled { opacity: .55; cursor: progress; }
+  .status { margin-top: 10px; min-height: 1.5em; font-size: .95rem; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); } .status.warn { color: var(--warn); }
+  .drop {
+    display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 34px 16px;
+    text-align: center; background: var(--drop); cursor: pointer; color: var(--muted);
+  }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop strong { display: block; color: var(--text); font-size: 1.05rem; margin-bottom: 4px; }
+  ul.files { list-style: none; padding: 0; margin: 14px 0 0; }
+  ul.files li { padding: 10px 0; border-top: 1px solid var(--line); font-size: .95rem; }
+  ul.files .name { font-weight: 600; word-break: break-all; }
+  ul.files .meta { color: var(--muted); }
+  ul.files .ok { color: var(--ok); } ul.files .err { color: var(--err); } ul.files .warn { color: var(--warn); }
+  footer { margin-top: 22px; color: var(--muted); font-size: .85rem; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>deid · 개인정보 비식별화</h1>
+    <p>모든 처리는 이 컴퓨터 안에서만 이루어집니다. 인터넷으로 보내지 않습니다. (local only, 127.0.0.1)</p>
+  </header>
+
+  <div class="notice" role="note">
+    <strong>주의:</strong> 자동 탐지는 완벽하지 않으니 공유 전 결과를 확인하세요.
+    특히 손글씨, 특이한 이름, 별명, 사진 속 얼굴은 찾지 못할 수 있습니다.
+  </div>
+
+  <section aria-labelledby="text-title">
+    <h2 id="text-title">텍스트 (Paste text)</h2>
+    <label class="hint" for="text">진료 기록 등을 붙여넣고 <b>비식별화</b>를 누르세요.
+      LLM 답변을 붙여넣고 <b>원래대로 복원</b>을 누르면 [이름1] 같은 가명이 원래 값으로 돌아옵니다.</label>
+    <textarea id="text" spellcheck="false" autocomplete="off"
+              placeholder="여기에 붙여넣기 (Paste text here)"></textarea>
+    <div class="buttons">
+      <button id="btn-deid" class="primary" type="button">비식별화</button>
+      <button id="btn-restore" type="button">원래대로 복원</button>
+      <button id="btn-copy" type="button">복사</button>
+      <button id="btn-clear" type="button">지우기</button>
+    </div>
+    <div id="text-status" class="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="file-title">
+    <h2 id="file-title">파일 (Files)</h2>
+    <label id="drop" class="drop" for="file-input" tabindex="0">
+      <strong>파일을 여기에 끌어다 놓거나 클릭해서 고르세요</strong>
+      엑셀(xlsx, csv), 워드(docx), 한글(hwpx), PDF, 이미지(png, jpg), 텍스트 · 최대 __MAX_MB__ MB<br>
+      결과 파일은 자동으로 다운로드됩니다. 원본은 바뀌지 않습니다.
+    </label>
+    <input id="file-input" type="file" multiple>
+    <ul id="files" class="files" aria-live="polite"></ul>
+  </section>
+
+  <footer>
+    가명([이름1] 등)과 원래 값의 대응표는 이 컴퓨터에 암호화되어 저장되며 기본 12시간 뒤 사라집니다.
+    지금 지우려면 터미널에서 <code>deid forget</code>을 실행하세요.
+  </footer>
+</main>
+
+<script nonce="__NONCE__">
+(function () {
+  "use strict";
+  var TOKEN = "__TOKEN__";
+  var MAX_BYTES = __MAX_MB__ * 1024 * 1024;
+  var $ = function (id) { return document.getElementById(id); };
+  var textarea = $("text"), statusEl = $("text-status");
+  var buttons = [$("btn-deid"), $("btn-restore")];
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function busy(on) { buttons.forEach(function (b) { b.disabled = on; }); }
+
+  async function postJson(path, payload) {
+    var r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Deid-Token": TOKEN },
+      body: JSON.stringify(payload),
+      credentials: "omit", cache: "no-store"
+    });
+    var data = await r.json().catch(function () { return { error: "HTTP " + r.status }; });
+    if (!r.ok) { throw new Error(data.error || ("HTTP " + r.status)); }
+    return data;
+  }
+
+  $("btn-deid").addEventListener("click", async function () {
+    var text = textarea.value;
+    if (!text.trim()) { setStatus("먼저 텍스트를 붙여넣으세요.", "warn"); return; }
+    busy(true); setStatus("처리 중...");
+    try {
+      var d = await postJson("/api/text", { text: text });
+      textarea.value = d.text;
+      var msg = "비식별화 완료: " + d.summary;
+      if (d.warnings && d.warnings.length) { msg += " · 주의: " + d.warnings.join(" / "); }
+      setStatus(msg + " — 붙여넣기 전에 확인하세요.", d.warnings && d.warnings.length ? "warn" : "ok");
+    } catch (e) {
+      setStatus("실패: " + e.message, "err");
+    } finally { busy(false); }
+  });
+
+  $("btn-restore").addEventListener("click", async function () {
+    var text = textarea.value;
+    if (!text.trim()) { setStatus("복원할 텍스트(LLM 답변 등)를 붙여넣으세요.", "warn"); return; }
+    busy(true); setStatus("복원 중...");
+    try {
+      var d = await postJson("/api/restore", { text: text });
+      textarea.value = d.text;
+      var msg = d.restored ? ("복원 완료: " + d.restored + "개") : "복원할 가명이 없습니다.";
+      if (d.unknown) { msg += " · 알 수 없는 가명 " + d.unknown + "개 (세션이 만료되었거나 다른 곳에서 만든 가명)"; }
+      setStatus(msg, d.unknown ? "warn" : (d.restored ? "ok" : "warn"));
+    } catch (e) {
+      setStatus("실패: " + e.message, "err");
+    } finally { busy(false); }
+  });
+
+  $("btn-copy").addEventListener("click", async function () {
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      setStatus("클립보드에 복사했습니다.", "ok");
+    } catch (e) {
+      textarea.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      setStatus(ok ? "클립보드에 복사했습니다." : "복사하지 못했습니다. 직접 선택해 복사하세요.", ok ? "ok" : "err");
+    }
+  });
+
+  $("btn-clear").addEventListener("click", function () { textarea.value = ""; setStatus(""); textarea.focus(); });
+
+  // ------------------------------------------------------------ files
+  var list = $("files"), drop = $("drop"), input = $("file-input");
+  var queue = Promise.resolve();
+
+  function addItem(name) {
+    var li = document.createElement("li");
+    var n = document.createElement("div"); n.className = "name"; n.textContent = name;
+    var m = document.createElement("div"); m.className = "meta"; m.textContent = "대기 중...";
+    li.appendChild(n); li.appendChild(m);
+    list.insertBefore(li, list.firstChild);
+    return { li: li, meta: m };
+  }
+
+  function line(item, text, cls) {
+    var d = document.createElement("div");
+    d.className = cls || "meta"; d.textContent = text;
+    item.li.appendChild(d);
+  }
+
+  function download(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = name; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
+  function decodeHeader(v) {
+    if (!v) { return ""; }
+    try { return decodeURIComponent(v); } catch (e) { return ""; }
+  }
+
+  async function processFile(file) {
+    var item = addItem(file.name);
+    if (file.size > MAX_BYTES) {
+      item.meta.className = "err";
+      item.meta.textContent = "파일이 너무 큽니다 (최대 " + (MAX_BYTES / 1048576) + " MB)";
+      return;
+    }
+    item.meta.textContent = "처리 중... (이미지·스캔 PDF는 시간이 걸릴 수 있습니다)";
+    try {
+      var r = await fetch("/api/file", {
+        method: "POST",
+        headers: { "X-Deid-Token": TOKEN, "X-Filename": encodeURIComponent(file.name),
+                   "Content-Type": "application/octet-stream" },
+        body: file, credentials: "omit", cache: "no-store"
+      });
+      if (!r.ok) {
+        var err = await r.json().catch(function () { return { error: "HTTP " + r.status }; });
+        throw new Error(err.error || ("HTTP " + r.status));
+      }
+      var blob = await r.blob();
+      var info = {};
+      try { info = JSON.parse(decodeHeader(r.headers.get("X-Deid-Report")) || "{}"); } catch (e) { info = {}; }
+      var outName = decodeHeader(r.headers.get("X-Deid-Filename")) || info.filename || ("deid-" + file.name);
+      download(blob, outName);
+      item.meta.className = "ok";
+      item.meta.textContent = "완료 → " + outName + " (다운로드됨)";
+      line(item, "찾은 항목: " + (info.summary || "-"));
+      (info.warnings || []).forEach(function (w) { line(item, "주의: " + w, "warn"); });
+    } catch (e) {
+      item.meta.className = "err";
+      item.meta.textContent = "실패: " + e.message;
+    }
+  }
+
+  function handleFiles(files) {
+    Array.prototype.forEach.call(files, function (f) {
+      queue = queue.then(function () { return processFile(f); });
+    });
+  }
+
+  input.addEventListener("change", function () { handleFiles(input.files); input.value = ""; });
+  drop.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+  });
+  drop.addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files) { handleFiles(e.dataTransfer.files); }
+  });
+  // A file dropped outside the zone must not make the browser open (and display) it.
+  ["dragover", "drop"].forEach(function (ev) {
+    window.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
+})();
+</script>
+</body>
+</html>

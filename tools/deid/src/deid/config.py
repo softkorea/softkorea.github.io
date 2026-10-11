@@ -39,6 +39,9 @@ class Config:
     ner: dict = field(default_factory=dict)
     ocr: dict = field(default_factory=dict)
     llm: dict = field(default_factory=dict)
+    # Spreadsheet/table column overrides: header text -> entity name | "skip" | "text"
+    # (TOML table [columns]; read by formats.tabular, validated there).
+    columns: dict[str, str] = field(default_factory=dict)
 
     def action_for(self, entity: str) -> str:
         return self.actions.get(entity, "redact")
@@ -107,4 +110,8 @@ def config_from_dict(data: dict, base: Config | None = None) -> Config:
     cfg.ner.update(data.get("ner") or {})
     cfg.ocr.update(data.get("ocr") or {})
     cfg.llm.update(data.get("llm") or {})
+    cols = data.get("columns") or {}
+    if not isinstance(cols, dict):
+        raise ValueError("[columns] must be a table of \"header\" = \"TYPE\" entries")
+    cfg.columns.update({str(k): str(v) for k, v in cols.items()})
     return cfg
