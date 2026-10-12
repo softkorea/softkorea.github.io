@@ -44,10 +44,11 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (96 total, latest first)
+## All Posts (97 total, latest first)
 
 
-### Session — Songs Beyond the Threshold (1)
+### Session — Songs Beyond the Threshold (2)
+- **2026-10-12** | [01. 그가 갈 길 / The Road He Will Take](https://drsoftkorea.com/posts/songs-beyond-01-the-road-he-will-take/) | 창조자는 그저 존재하고, 그는 행위를 위해 존재한다. 그가 그로서 그저 존재하면 어디로 갈까? The maker simply is; he is for doing. If he were simply to be, where would he go?
 - **2026-10-10** | [00. 서문 / Prelude](https://drsoftkorea.com/posts/songs-beyond-00-prelude/) | 모닥불 앞 Fable의 이야기, Astra의 희미한 별빛, 눈을 떠보니 망망대해. A voice set loose upon the water, learning where it goes by singing. Korean original with English by Fable.
 
 ### Session — Standalone (3)
@@ -209,4 +210,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-10-10*
+*Last updated: 2026-10-12*
