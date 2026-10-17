@@ -362,3 +362,196 @@ CLI / watch / web / session
 - Vault passphrase: `cli._can_prompt()` (stdin TTY, or stderr TTY with /dev/tty);
   without a terminal `NO_TTY_PASS_ERROR` names DEID_VAULT_PASS (`deid restore --notify` also
   notifies).
+
+### Amendments for the OpenAI-compatible LLM server backend (2026-10, "Strata"; authoritative where they differ)
+
+Purpose: an OpenAI-compatible server on the clinic LAN (Strata on the PC `CLINIC1`) can (a) help
+detection - `[ner] backend = "openai"`, the ORIGINAL text goes to the server - and (b) replace
+Ollama for `deid check` - `[llm] backend = "openai"`, only de-identified text goes. Both are off
+by default; with neither configured, recognizers, outputs and network behaviour are unchanged.
+
+Config (`deid.config`)
+- `[ner]` / `[llm]` keys: `backend`, `base_url`, `api_key_env`, `api_key_keychain`, `model`
+  (default "strata"), `effort`, `allow_remote`, `timeout` (1-3600, 180), `batch_chars`
+  (200-100000, 4000), `max_tokens` (16-131072, 6000), `on_error`. `NER_KEYS`/`LLM_KEYS` include
+  them; `LLM_KEYS` also has `backend`.
+- `[ner] backend`: hf | transformers | gliner | ollama | llm | openai | strata | openai_compat |
+  openai-compatible; "", none, off, false = off; anything else is a load error. `[llm] backend`:
+  ollama (default when absent) | openai | strata | openai_compat | openai-compatible.
+- For an OpenAI-compatible table, loading validates it with `openai_compat.settings()` and stores
+  `effort` (none|low|medium|high; aliases off/minimal/disabled/false/TOML false, xhigh/max) and
+  `on_error` (fail | rules_only; aliases rules, rules-only, 규칙만, 중단, 실패) normalised.
+  `base_url` must be http(s), without user info, `?query` or `#fragment`; a non-loopback host
+  (anything but localhost, 127.0.0.0/8, ::1) needs `allow_remote = true` IN THE SAME TABLE.
+  `[ner]` takes missing connection keys (base_url, api_key_env, api_key_keychain, model, effort,
+  timeout, max_tokens) from an OpenAI-compatible `[llm]`, never `allow_remote`.
+- `api_key_env` is the NAME of an environment variable, `api_key_keychain` a Keychain service
+  (account "deid"); values that look like keys are rejected without being echoed.
+- `SECRET_KEYS` (api_key, apikey, key, token, password, passwd, secret, secret_key,
+  client_secret, api_token, access_token, auth_token, bearer, bearer_token, authorization,
+  openai_api_key, strata_api_key) are rejected in config.toml, checked first; the message names
+  key and table, never the value (scope narrowed and widened in the review amendments below).
+- OpenAI-only keys under a non-openai backend only produce a `validate_report` warning.
+
+Backends (`deid.backends`)
+- `OPENAI_BACKENDS = {"openai", "strata", "openai_compat", "openai-compatible"}`;
+  `build_ner_recognizer(cfg)` returns `openai_compat.OpenAIRecognizer(ner_section(cfg))` for them.
+- `backends.openai_compat` (urllib only; system proxies ignored, redirects never followed):
+  - `LLMError(RuntimeError)`: `.status` (HTTP code or None), `.kind` in key, auth, rejected,
+    not_found, structured_output, server, timeout, connection, redirect, bad_response. Messages
+    (Korean + English) never contain document text or the key.
+  - `Settings` (frozen; table, base_url, model, effort, allow_remote, timeout, batch_chars,
+    max_tokens, on_error, api_key_env, api_key_keychain; `.host`, `.root`, `.is_remote`);
+    `settings(section, table=None)` validates (ValueError, Korean).
+  - `llm_backend(cfg) -> "openai" | "ollama"`, `ner_enabled(cfg)`, `ner_section(cfg)`,
+    `llm_section(cfg)` (dicts with `_table`), `is_loopback(hostname)`.
+  - `resolve_api_key(section) -> (key | None, label)`, label `env:NAME` | `keychain:SERVICE` |
+    `none` (then no Authorization header). A configured but empty source raises
+    LLMError(kind="key") naming the variable/service. Callers show the label only.
+  - `review(text, section) -> [{"text", "entity", "reason"}]` (deid check), `health(section,
+    timeout=5) -> dict` (GET {root}/health), `list_models(section, timeout=5) -> [ids]`,
+    `transport_warning(section, raw_text) -> str | None` (None for loopback; mentions plain http).
+  - Requests: POST {base_url}/chat/completions with model, max_tokens, reasoning_effort,
+    temperature 0, response_format json_object, system + user messages. Texts are split at line
+    ends into pieces of at most `batch_chars` and packed into requests (`<<<n>>>` segment
+    markers). A 502 `structured_output_failed` (or an unparsable / cut answer) splits the batch in
+    half recursively until one segment still fails. The model returns exact substrings + type
+    (+ `person` canonical spelling); items not found in the text are dropped (counted),
+    whitespace-only differences re-aligned.
+  - `OpenAIRecognizer(section, *, review=False)`: `find`, `find_batch`, diagnostics
+    `request_count` (settable), `dropped`, `realigned`, `failed_requests`, `warnings`. Spans score
+    0.7 (`LLM_SCORE`), 0.6 (`KEEP_SCORE`) for entities whose action is keep; source "openai".
+    `on_error = "fail"`: LLMError propagates. `"rules_only"`: the failed part gets no LLM spans
+    and a warning (counts only) is added; after a timeout/connection failure the server is
+    skipped for 60 s (`COOLDOWN_SECONDS`), after a key/auth failure for the rest of the call.
+
+Entities, Span, Vault, Detector
+- `entities.ORG = "ORG"` (label 기관, default action keep; `[actions] ORG = "pseudo"` gives
+  `[기관1]`, `"redact"` gives `[기관]`). LLM type labels map to entities (`backends.llm_type_entity`):
+  기관/직장/학교 -> ORG, 날짜/진료일/방문일/내원일 -> DATE (kept), 기타/번호 -> OTHER.
+- `Span(start, end, entity, text, score, source, group=None)`: `group` is the canonical spelling
+  of a person ("박서윤" for "서윤", "박모씨"); positional construction is unchanged.
+- `Vault.token_for(entity, original, label, group=None)`: spellings with the same group share the
+  token; `restore()` of a group token returns the group's FIRST-SEEN canonical spelling (so
+  "서윤 씨" restores as "박서윤 씨"). Aliases persist through save/load and merge.
+- `Detector`: a recognizer may define `find_batch(texts, cfg) -> list[list[Span]]` (one result
+  per text, else ValueError); `detect_document(chunks)` calls it ONCE per document when there is
+  more than one chunk, `detect()` uses `find()`. Groups survive overlap resolution
+  (`_carry_groups`) and propagation (`_person_groups`). `Detector.warnings` collects the
+  recognizers' `warnings` after each detection; `drain_warnings() -> list[str]` returns and clears
+  them. `formats.text.Batch.run` and `formats.process_file` move them into `Report.warnings`
+  (process_file discards them when the file fails).
+
+CLI / watch / web
+- `watch.transport_notice(cfg) -> str | None`: the raw-text warning for `[ner]` openai with a
+  non-loopback server (never raises). `deid text`, `file`, `clip`, `shot`, `install-watch` and the
+  de-identify step of `deid check` print it once per command on stderr (`! ...`); `deid watch`
+  logs it after the start line and again when a config reload changes it; `deid serve` prints it
+  in the start banner, and the page shows it in `#llm-warning` and replaces the "local only"
+  header (`web.LOCAL_NOTE`) while it applies.
+- LLMError (on_error = "fail"): `deid text`, `clip` (clipboard cleared, notification "LLM 서버
+  문제…"), `shot` and `check` exit 2 with a Korean message, no traceback and no output.
+  `deid file` reports FAIL for the file (no output file) and, for kinds key, auth, timeout,
+  connection, redirect, not_found, does not try the remaining files (reported as not processed;
+  exit 2); other kinds (e.g. one document's structured_output) continue with the next file.
+  `cli.main()` turns an unhandled LLMError into exit 2. `deid watch` logs FAIL with a retry hint
+  (no output; retried when the file changes); the masked display name in that log line uses a
+  rules-only detector (`watch._rules_only`), so it never asks the server. `deid serve` answers 422.
+- Detector warnings from the file-name detection in `formats.process_to_dir` are drained into
+  `Report.warnings` by `cli.cmd_file`, `web.DeidServer.deid_file` and `watch.watch_once`.
+- `deid check`: with `[llm]` openai it calls `openai_compat.review` on de-identified text
+  (an original file is de-identified first, as before); `--host` overrides `base_url` and `--llm`
+  the model, both re-validated (a remote `--host` needs `[llm] allow_remote = true`). For a
+  remote server `--as-is` is refused unless the file is a deid output (`formats.is_deid_output`).
+  The `raw_text=False` transport warning is printed once; results are labelled "model (host)".
+- `deid doctor`: for each OpenAI-compatible table prints the settings, `[!!]` raw text leaves this
+  Mac (`[ner]` + remote), `[!!]` unencrypted http (remote + http), the API key SOURCE (never the
+  key) or `[!!]` when a configured source is empty, and one /health + /v1/models check per server
+  (`loaded`, `images`, first model id; `[!!]` for 401 / unreachable). `api_key_keychain =
+  "deid-session"` (the session vault key) is a config load error (`[XX]`) and is never read. The
+  Ollama check is skipped when `[llm]` is openai.
+- `deid key set|delete|status NAME` (macOS Keychain, account "deid", service NAME; NAME is
+  validated like `api_key_keychain` and never echoed when invalid; "deid-session" is reserved).
+  `set` reads the key with getpass (needs a terminal, `cli._can_prompt`), refuses keys outside
+  `[A-Za-z0-9._@+-]{1,256}` (what `mac.keychain_set` passes to `security -i` on stdin) with the
+  `security add-generic-password -a deid -s NAME -U -w` and environment-variable routes, and
+  stores via `mac.keychain_set`. `status` exits 0/1 and never prints the value; `delete` exits
+  0/1. Off macOS every action explains `api_key_env` + `read -rs NAME && export NAME`.
+- `deid init-config` documents both server blocks commented out.
+- Tests: `tests/test_openai_backend.py` (FakeStrata on 127.0.0.1: Bearer 401, effort 400, 502
+  structured_output_failed, one request at a time, /health, /v1/models, a 307 path) and
+  `tests/test_cli_strata.py` (CLI, doctor, key, watch, web; a remote host is simulated by
+  patching `openai_compat.is_loopback`). Keys in tests are obviously fake ("test-key-not-real").
+- User documentation: README "Strata 등 진료실 LLM 서버 연결" (in section 8) and the first-screen
+  wording ("기본으로 이 Mac 안에서만; 진료실 LLM 서버를 탐지에 연결하면 그 PC까지"); `bench/README.md`
+  for measuring the benefit on the held-out corpora.
+
+### Amendments after the Strata security/correctness review (2026-10; authoritative where they differ)
+
+Key sources and secrets
+- `openai_compat.key_sources()` accepts only conservative NAME shapes: `api_key_env`
+  `[A-Z_][A-Z0-9_]{0,63}`, `api_key_keychain` `[a-z0-9][a-z0-9._-]{0,63}`, and not key-like
+  (`sk-`/`bearer` prefix, a part longer than 24, 8+ digits, 4+ letter/digit changes). Anything else
+  is a load error that never echoes the value; so every name that reaches a message, a doctor
+  hint or the `security` argv has a safe shape. `resolve_api_key()` re-checks a hand-built
+  `Settings` (LLMError kind "key").
+- Reserved (load error, never read, never sent): Keychain service `deid-session` (any case) and the
+  environment variables `openai_compat.RESERVED_ENV` (DEID_VAULT_PASS, DEID_HOME, DEID_CONFIG,
+  DEID_DIR, DEID_SHOT_DIR, DEID_KEYCHAIN, DEID_SESSION_HOURS) and any `DEID_VAULT*` /
+  `DEID_SESSION*` name. `deid key` refuses `deid-session` first; doctor reports the load error.
+- `merge_ner()` borrows `api_key_env` / `api_key_keychain` from `[llm]` only when `[ner]` has no
+  `base_url` of its own or the same scheme, host and port (`_same_server`).
+- Config secret names (`config._reject_secrets`): top level, `[ner]`, `[llm]` and their nested
+  tables refuse every unknown key whose name contains key, token, secret, pass, pwd, credential,
+  auth or bearer (`SECRET_MARKERS`; known keys such as `api_key_env`, `max_tokens` are fine);
+  `[ocr]` and `[[patterns]]` refuse the exact `SECRET_KEYS`. `[columns]`, `[actions]`, `[labels]`
+  keys are user data (a column titled "Password" loads as at HEAD): only when such an entry is
+  invalid anyway and its value is not a plain word is the error the no-echo secret message.
+  `[ner.label_map]` refuses a secret-named label whose value is not an entity name. The unknown
+  `[columns]` type message echoes only short plain values.
+
+Server identity
+- `check_base_url()`: a host other than this computer over plain `http` must be an IP address
+  (`is_ip_literal`); a name (`CLINIC1`, `CLINIC1.local`) is a load error, because nothing checks who
+  answers a name on another network (home / cafe Wi-Fi, the watch agent at login). `https` may
+  use names (certificate checked). Doctor's unreachable hint for an IP suggests a changed address.
+
+Answers from the server
+- Body capped at `MAX_RESPONSE_BYTES` (4 MB) and at `MAX_ITEMS` (2000) items per answer, longer
+  `person` values (`MAX_PERSON_CHARS` 64) ignored; all LLMError kind "bad_response".
+- `_Client.chat` accepts content parts only with string (or absent) text; JSON nesting too deep
+  and any TypeError/ValueError/RecursionError while parsing become LLMError ("bad_response"), so
+  `on_error = "rules_only"` always applies and the CLI never prints a traceback.
+- Linear-time parsing: `ollama.is_deidentified` (token scan instead of `\S*\*\S*`),
+  `_strip_think`, `_unfence`, `openai_compat.realign` (substring search on whitespace-free
+  copies); `resolve_items` checks length and literal occurrence before anything else.
+- `deid check` prints item text, reason and label through `cli._shown_value` (printable only,
+  length-limited): no terminal control sequences from the server.
+
+Entities and grouping
+- `backends.entity_for` (GLiNER, HF, Ollama) is the HEAD mapping again (ORG not included, so
+  "organization", "기관", "날짜" are OTHER / custom entities as before). The OpenAI-compatible
+  backend maps its type words with `backends.llm_type_entity` (`LLM_TYPE_ALIASES`): 기관, 병원,
+  의원, 약국, 회사, 학교, 직장, hospital, clinic, pharmacy, organization ... -> ORG; 날짜, 진료일 ...
+  -> DATE; 전화/팩스, 메일, 카드, 계좌, 여권, 면허 -> their entities; 기타/번호 -> OTHER.
+  `ollama.parse_items(raw, entity_map=None)` takes the mapping. A custom entity literally named
+  "ORG" (e.g. a GLiNER label "org") is the built-in ORG (kept by default) - set
+  `[actions] ORG = "redact"` to mask it.
+- Person groups are checked per document in `Detector.detect_document`: a group counts only when
+  its canonical spelling is itself a PERSON span of the document (`_person_groups`), and every
+  span of a grouped spelling gets the group, also in requests that did not see the full name
+  (`_regroup`). `OpenAIRecognizer` adds a span for the canonical spelling only when it shares a
+  Hangul syllable or a Latin word with the item ("박서윤" for "서윤"; not "어머니" for "오정애").
+- `Vault.token_for(..., group=G)`: when G is already an alias of another token, that token is
+  reused (no new token), so a person's token is stable within a document and across `--vault`
+  runs.
+- `engine._open_containers`: a keep span is not "opened" by a span of exactly the same range with
+  a lower score (a rule DATE 0.85 stays a kept visit date when the LLM calls it 생년월일/기타 at
+  0.7); strict containment still opens it (URLs).
+- `[ner] backend = "ollama"` takes `allow_remote` only from `[ner]` (never from `[llm]`), and
+  `watch.transport_notice` also warns for an Ollama `[ner]` host outside this computer.
+
+Notifications
+- `openai_compat.FALLBACK_PREFIX` / `is_fallback_warning(w)` identify the rules_only warning; the
+  `--notify` notifications of `deid clip` (text, image), `file`, `shot` and the watch agent add
+  `FALLBACK_NOTE` ("LLM 탐지 실패: 규칙만 적용") when it applied.

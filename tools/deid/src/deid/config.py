@@ -45,11 +45,30 @@ engine lang psm adaptive upscale invert min_conf timeout tesseract_cmd tesseract
 recognition_level space_gap style verify orientation barcodes bare_names redact_faces pdf_images
 pdf_dpi docx_images hwpx_images max_image_pixels max_frames max_total_pixels pad padding
 """.split())
+# OpenAI-compatible server keys ([ner] / [llm] backend = "openai", see backends.openai_compat).
+OPENAI_KEYS = frozenset("""
+base_url api_key_env api_key_keychain effort batch_chars max_tokens on_error
+""".split())
 NER_KEYS = frozenset("""
 backend model device label_map pii_model max_chars overlap labels threshold host allow_remote
 timeout min_score
+""".split()) | OPENAI_KEYS
+LLM_KEYS = frozenset("backend model host allow_remote timeout".split()) | OPENAI_KEYS
+# [ner] / [llm] backend values (case-insensitive); "strata" is the clinic's OpenAI-compatible
+# server. A false/empty [ner] backend means "off".
+NER_BACKENDS = frozenset({"hf", "transformers", "gliner", "ollama", "llm", "openai", "strata",
+                          "openai_compat", "openai-compatible", "none", "off", "false", ""})
+LLM_BACKENDS = frozenset({"ollama", "openai", "strata", "openai_compat", "openai-compatible"})
+# Key names that would hold a secret. In the settings tables ([ner], [llm]) and at the top level
+# any unknown key whose name contains one of SECRET_MARKERS is refused too ("strata_key",
+# "passphrase", "credentials" ...). [ocr] and [[patterns]] refuse the exact names. In [columns],
+# [actions] and [labels] the keys are spreadsheet headers / entity names (user data, e.g. a
+# column titled "Password"), so they are refused only when their value is not valid there.
+SECRET_KEYS = frozenset("""
+api_key apikey key token password passwd secret secret_key client_secret api_token access_token
+auth_token bearer bearer_token authorization openai_api_key strata_api_key
 """.split())
-LLM_KEYS = frozenset("model host allow_remote timeout".split())
+SECRET_MARKERS = ("key", "token", "secret", "pass", "pwd", "credential", "auth", "bearer")
 _TABLE_KEYS = {"ocr": OCR_KEYS, "ner": NER_KEYS, "llm": LLM_KEYS}
 PATTERN_KEYS = ("entity", "regex", "score", "context")
 # [columns] values besides entity names / Korean labels (formats.tabular.parse_column_kind).
@@ -450,11 +469,13 @@ def _column_kind(value, header: str, ents: _Entities) -> str:
     ent = ents.get(v) if v else None
     if ent is not None:
         return ent
+    # a long or unusual value is not echoed (it may be a secret appended under [columns])
+    shown = repr(value) if re.fullmatch(r"[A-Za-z0-9가-힣 _.-]{0,20}", v) else "(값 생략)"
     raise ValueError(
-        f"설정 [columns]: '{header}' 열의 유형 {value!r}을(를) 알 수 없습니다. "
-        f"{_suggest(v, ents.names + ['skip', 'text'] + list(ents.by_label))}"
+        f"설정 [columns]: '{header}' 열의 유형 {shown}을(를) 알 수 없습니다. "
+        f"{_suggest(v, ents.names + ['skip', 'text'] + list(ents.by_label)) if shown != '(값 생략)' else ''}"
         "PERSON, PHONE, RRN, ADDRESS, EMAIL, MRN, BIRTHDATE 같은 항목 이름(또는 이름, 전화번호 같은 "
-        f"한글 표시 이름)이나 skip(그대로 두기), text(자동 탐지)를 쓰세요 (unknown column type {value!r})")
+        f"한글 표시 이름)이나 skip(그대로 두기), text(자동 탐지)를 쓰세요 (unknown column type {shown})")
 
 
 def _action(value, ent: str) -> str:
@@ -478,6 +499,7 @@ def config_from_dict(data: dict, base: Config | None = None, *,
     warn = problems.append if problems is not None else (lambda _msg: None)
     if not isinstance(data, dict):
         raise ValueError("설정 파일의 내용이 표(TOML) 형식이 아닙니다 (config must be a TOML table)")
+    _reject_secrets(data)      # first: later messages may echo values
     data = dict(data)
 
     # names / allowlist that ended up inside a table (a line appended at the end of the file
@@ -563,21 +585,30 @@ def config_from_dict(data: dict, base: Config | None = None, *,
 
     actions = {}
     for key, act in (data.get("actions") or {}).items():
-        ent = ents.require(key, "[actions]")
-        if isinstance(act, (list, dict)):
-            raise ValueError(f"설정 [actions]: {key} = \"mask\" 처럼 처리 방법 하나만 쓰세요 "
-                             f"(목록을 넣으려 했다면 " + _PLACE_HINT.format(key="names") + ")")
-        actions[ent] = _action(act, ent)
+        try:
+            ent = ents.require(key, "[actions]")
+            if isinstance(act, (list, dict)):
+                raise ValueError(f"설정 [actions]: {key} = \"mask\" 처럼 처리 방법 하나만 쓰세요 "
+                                 f"(목록을 넣으려 했다면 " + _PLACE_HINT.format(key="names") + ")")
+            actions[ent] = _action(act, ent)
+        except ValueError as e:
+            raise _data_key_error("[actions]", key, act, e) from None
     labels = {}
     for key, lab in (data.get("labels") or {}).items():
-        ent = ents.require(key, "[labels]")
+        try:
+            ent = ents.require(key, "[labels]")
+        except ValueError as e:
+            raise _data_key_error("[labels]", key, lab, e) from None
         if not isinstance(lab, str) or not lab.strip():
             raise ValueError(f"설정 [labels]: {key} = \"환자\" 처럼 따옴표 친 표시 이름을 쓰세요 "
                              f"(label for {key} must be a non-empty string)")
         labels[ent] = lab.strip()
     columns = {}
     for header, kind in (data.get("columns") or {}).items():
-        columns[str(header)] = _column_kind(kind, str(header), ents)
+        try:
+            columns[str(header)] = _column_kind(kind, str(header), ents)
+        except ValueError as e:
+            raise _data_key_error("[columns]", header, kind, e) from None
 
     def entity_list(key: str) -> set[str]:
         return {ents.require(v, key) for v in _string_list(data[key], key)}
@@ -601,6 +632,8 @@ def config_from_dict(data: dict, base: Config | None = None, *,
                 warn(f"[{table}]의 {k!r}는 알 수 없는 설정이라 무시됩니다. {_suggest(k, sorted(known))}"
                      f"(unknown [{table}] key {k!r})")
 
+    ner_table, llm_table = _check_backends(data, warn)
+
     # Everything checked: apply.
     cfg.custom_patterns.extend(new_patterns)
     cfg.actions.update(actions)
@@ -616,11 +649,154 @@ def config_from_dict(data: dict, base: Config | None = None, *,
             p.entity for p in cfg.custom_patterns
         }
         cfg.enabled = base_set - disabled
-    cfg.ner.update(data.get("ner") or {})
+    cfg.ner.update(ner_table)
     cfg.ocr.update(data.get("ocr") or {})
-    cfg.llm.update(data.get("llm") or {})
+    cfg.llm.update(llm_table)
     cfg.columns.update(columns)
     return cfg
+
+
+def _secret_error(where: str, key: str) -> ValueError:
+    return ValueError(
+        f"설정 {where}에는 '{key}' 항목을 쓸 수 없습니다: API 키·비밀번호 같은 비밀값은 설정 파일에 적지 마세요. "
+        "키는 환경변수나 macOS 키체인에 두고 그 이름만 적습니다 - 예: api_key_env = \"STRATA_API_KEY\" "
+        "또는 api_key_keychain = \"deid-strata\" (secrets are not allowed in config files; use "
+        "api_key_env or api_key_keychain)")
+
+
+def _is_secret_key(key) -> bool:
+    return isinstance(key, str) and _norm_key(key) in SECRET_KEYS
+
+
+def _secretish_key(key) -> bool:
+    """A name that would hold a secret: the exact SECRET_KEYS or any name containing key, token,
+    secret, pass, credential, auth ... ("strata_key", "x-api-key", "passphrase")."""
+    if not isinstance(key, str):
+        return False
+    norm = _norm_key(key)
+    return norm in SECRET_KEYS or any(m in norm.replace("_", "") for m in SECRET_MARKERS)
+
+
+# Tables whose keys are user data (headers, entity names), checked in config_from_dict instead.
+_DATA_TABLES = ("columns", "actions", "labels")
+# Settings tables checked with the broad rule; their nested tables too, except label_map
+# (model labels -> entities).
+_KNOWN_KEYS = {"ner": NER_KEYS, "llm": LLM_KEYS}
+
+
+def _reject_secrets(data: dict) -> None:
+    """ValueError for a key that would hold a secret (api_key, token, strata_key, password ...)
+    at the top level, in [ner] / [llm] (and their nested tables), [ocr] and [[patterns]].
+    The message names the key and the table, never the value."""
+    top = set(TOP_LEVEL_KEYS + TABLES + ARRAY_TABLES)
+    for key, value in data.items():
+        if key not in top and _secretish_key(key):
+            raise _secret_error("파일 맨 위" if not isinstance(value, dict) else f"[{key}]", key)
+    for table, value in data.items():
+        if table in _DATA_TABLES:
+            continue
+        broad = table in _KNOWN_KEYS
+        known = _KNOWN_KEYS.get(table, frozenset())
+        tables = [(f"[{table}]", value, known)] if isinstance(value, dict) else []
+        if isinstance(value, list):
+            tables += [(f"[[{table}]] {i}번째", v, frozenset()) for i, v in enumerate(value, 1)
+                       if isinstance(v, dict)]
+        while tables:
+            where, sub, ok = tables.pop()
+            for key, inner in sub.items():
+                if key in ok:
+                    if isinstance(inner, dict) and key == "label_map":
+                        _label_map_secret(f"{where[:-1]}.{key}]", inner, data)
+                    elif isinstance(inner, dict):
+                        tables.append((f"{where[:-1]}.{key}]", inner, frozenset()))
+                    continue
+                if _secretish_key(key) if broad else _is_secret_key(key):
+                    raise _secret_error(where, key)
+                if isinstance(inner, dict):
+                    tables.append((f"{where[:-1]}.{key}]" if where.endswith("]") else where, inner,
+                                   frozenset()))
+
+
+def _plain_word(value) -> bool:
+    """A short word without digits or punctuation ("redact", "OTHER", "이름"): not a key."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z가-힣 _]{0,20}", value.strip()) is not None
+
+
+def _data_key_error(where: str, key, value, error: ValueError) -> ValueError:
+    """The error for an invalid [columns] / [actions] / [labels] entry. When its key is named
+    like a secret ("api_key = ..." appended at the end of the file lands in the last table) and
+    the value is not a plain word, the value may be a key: say so without echoing it."""
+    if _secretish_key(key) and not _plain_word(value):
+        return _secret_error(where, str(key))
+    return error
+
+
+def _label_map_secret(where: str, sub: dict, data: dict) -> None:
+    """[ner.label_map]: model label -> entity ("" = ignore). A secret-named label whose value is
+    not an entity name is a pasted secret (refused without echo)."""
+    customs = {str(p.get("entity", "")).strip().casefold() for p in data.get("patterns") or []
+               if isinstance(p, dict)}
+    names = {e.casefold() for e in entities.ALL} | customs | set(entities.LABELS_KO.values())
+    for key, value in sub.items():
+        if not _secretish_key(key) or value in (None, "", False):
+            continue
+        if not (isinstance(value, str) and (value.strip().casefold() in names
+                                            or value.strip() in names)):
+            raise _secret_error(where, str(key))
+
+
+def _backend_value(value, table: str, allowed: frozenset) -> str:
+    if value is None or value is False:
+        return ""
+    v = str(value).strip().casefold() if isinstance(value, str) else None
+    if v == "":
+        return ""
+    if v is None or v not in allowed:
+        shown = repr(value) if isinstance(value, str) and len(value) <= 20 else "(값 생략)"
+        names = ("hf, gliner, ollama, openai(=strata)" if table == "ner"
+                 else "ollama(기본), openai(=strata)")
+        raise ValueError(f"설정 [{table}] backend = {shown}을(를) 알 수 없습니다. "
+                         f"{_suggest(str(value), sorted(allowed - {'', 'none', 'off', 'false'}))}"
+                         f"쓸 수 있는 값: {names} (unknown [{table}] backend)")
+    return v
+
+
+def _check_backends(data: dict, warn) -> tuple[dict, dict]:
+    """Validate [ner] / [llm] backends and the OpenAI-compatible server keys.
+
+    Returns the two tables to apply, with effort / on_error normalised for an OpenAI-
+    compatible backend. Raises ValueError (Korean) for invalid values."""
+    ner = dict(data.get("ner") or {})
+    llm = dict(data.get("llm") or {})
+    from .backends import OPENAI_BACKENDS
+
+    ner_backend = _backend_value(ner.get("backend"), "ner", NER_BACKENDS)
+    llm_backend = _backend_value(llm.get("backend"), "llm", LLM_BACKENDS) if "backend" in llm else ""
+    tables = []
+    if llm_backend in OPENAI_BACKENDS:
+        tables.append(("llm", llm, dict(llm, _table="llm")))
+    if ner_backend in OPENAI_BACKENDS:
+        from .backends.openai_compat import merge_ner
+
+        tables.append(("ner", ner, merge_ner(ner, llm)))
+    if tables:
+        from .backends import openai_compat
+
+        for name, table, section in tables:
+            conf = openai_compat.settings(section, name)    # ValueError with a Korean message
+            if "effort" in table:
+                table["effort"] = conf.effort
+            if "on_error" in table:
+                table["on_error"] = conf.on_error
+    for name, table, backend in (("ner", ner, ner_backend), ("llm", llm, llm_backend)):
+        if backend in OPENAI_BACKENDS:
+            continue
+        unused = [k for k in OPENAI_KEYS if k in table]
+        if unused:
+            warn(f"[{name}]의 {', '.join(sorted(unused))}는 backend = \"openai\"일 때만 쓰입니다. 지금은 "
+                 f"무시됩니다 ({', '.join(sorted(unused))} in [{name}] only apply to backend = "
+                 "\"openai\")")
+    return ner, llm
 
 
 def validate(path: str | os.PathLike | None = None) -> tuple[list[str], list[str]]:

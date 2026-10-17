@@ -219,9 +219,15 @@ def process_file(src: str | os.PathLike, dst: str | os.PathLike, detector: "Dete
             raise TypeError(f"{name} handler returned {type(report).__name__}, not Report")
         if _stat_sig(dst) is None:
             raise RuntimeError("출력 파일이 만들어지지 않았습니다 (the handler wrote no output)")
+        drain = getattr(detector, "drain_warnings", None)
+        if callable(drain):   # detector warnings not taken by the handler (LLM on_error)
+            report.warnings.extend(w for w in drain() if w not in report.warnings)
     except BaseException:
         if _stat_sig(dst) != before:
             _remove(dst)
+        drain = getattr(detector, "drain_warnings", None)
+        if callable(drain):   # they belong to this failed file, not to the next one
+            drain()
         raise
     report.source = str(src)
     report.output = str(dst)

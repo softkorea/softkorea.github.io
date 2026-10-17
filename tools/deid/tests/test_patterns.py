@@ -487,8 +487,9 @@ def test_recognizer_protocol_and_entities():
         assert isinstance(r.entities, tuple) and r.entities
         assert callable(r.find)
         covered.update(r.entities)
-    # PERSON only through query-string values ("?name=..."), never ADDRESS
-    expected = set(E.ALL) - {E.ADDRESS}
+    # PERSON only through query-string values ("?name=..."), never ADDRESS; ORG only from
+    # the LLM backend
+    expected = set(E.ALL) - {E.ADDRESS, E.ORG}
     assert covered == expected
     assert {r.name for r in RECS if E.PERSON in r.entities} == {"url_param"}
     assert len({r.name for r in RECS}) == len(RECS)

@@ -142,9 +142,10 @@ class _Folded:
         if self.starts is None:
             if self.text is self.orig:
                 return sp
-            return Span(sp.start, sp.end, sp.entity, self.orig[sp.start:sp.end], sp.score, sp.source)
+            return Span(sp.start, sp.end, sp.entity, self.orig[sp.start:sp.end], sp.score,
+                        sp.source, sp.group)
         s, e = self.starts[sp.start], self.ends[sp.end - 1]
-        return Span(s, e, sp.entity, self.orig[s:e], sp.score, sp.source)
+        return Span(s, e, sp.entity, self.orig[s:e], sp.score, sp.source, sp.group)
 
 
 def fold_text(text: str) -> str:
@@ -265,7 +266,13 @@ def _open_containers(spans: list[Span], is_keep: Callable[[str], bool]) -> list[
     for k in keeps:
         i = bisect_left(starts, k.start)
         while i < len(inner) and inner[i].start < k.end:
-            if inner[i].end <= k.end:
+            x = inner[i]
+            if x.end <= k.end:
+                # The SAME text read two ways is not a container: the more confident reading
+                # wins in resolve_overlaps (a rule DATE 0.85 over an LLM 생년월일/기타 0.7).
+                if (x.start, x.end) == (k.start, k.end) and k.score > x.score:
+                    i += 1
+                    continue
                 opened.add(id(k))
                 break
             i += 1
@@ -279,7 +286,8 @@ def resolve_overlaps(spans: Iterable[Span],
     """Keep non-overlapping spans: higher score wins, then longer, then earlier start.
 
     `is_keep(entity)`: True for entities whose action is "keep". Such a span loses to any
-    other span it fully contains (see _open_containers); partial overlaps use the scores.
+    other span it fully contains (see _open_containers) - except a span of exactly the same
+    range with a lower score; partial overlaps use the scores.
     """
     if is_keep is not None:
         spans = _open_containers(list(spans), is_keep)
@@ -407,13 +415,25 @@ def _given_name(value: str, surnames1, surnames2) -> str | None:
 
 
 class Detector:
-    """Find PII spans in text using a list of recognizers plus value propagation."""
+    """Find PII spans in text using a list of recognizers plus value propagation.
+
+    A recognizer may also define ``find_batch(texts, cfg) -> list[list[Span]]`` (the
+    OpenAI-compatible LLM backend): detect_document() then calls it ONCE with all chunks of
+    the document instead of find() per chunk, so a sequential LLM server gets few requests.
+    Recognizers that degrade instead of failing put messages in their ``warnings`` list;
+    the detector collects them in ``self.warnings`` (drain_warnings()) for the Report.
+    Exceptions from recognizers (e.g. ``LLMError`` with on_error = "fail") propagate.
+    """
 
     def __init__(self, cfg: Config | None = None, recognizers: list[Recognizer] | None = None,
                  extra_recognizers: list[Recognizer] | None = None) -> None:
         self.cfg = cfg if cfg is not None else default_config()
         recs = _default_recognizers(self.cfg) if recognizers is None else list(recognizers)
         self.recognizers: list[Recognizer] = recs + list(extra_recognizers or [])
+        # Messages from recognizers that degraded without failing (e.g. the LLM backend with
+        # on_error = "rules_only"). Never contain document text; callers drain them
+        # (drain_warnings) into their Report.
+        self.warnings: list[str] = []
         self._known: dict[str, set[str]] = {}
         self._particles, self._honorifics = _suffix_lists()
         parts = "|".join(map(re.escape, self._particles))
@@ -445,6 +465,12 @@ class Detector:
         """Forget every value registered with add_known()."""
         self._known.clear()
 
+    def drain_warnings(self) -> list[str]:
+        """Pending warnings (see `warnings`), removed from the detector."""
+        out = list(self.warnings)
+        self.warnings.clear()
+        return out
+
     def detect(self, text: str, known: KnownValues | None = None) -> list[Span]:
         """Sorted, non-overlapping spans for one text (propagation within this text)."""
         return self.detect_document([text], known=known)[0]
@@ -456,14 +482,33 @@ class Detector:
         """
         folded = [_Folded(c) if c else None for c in chunks]
         allow = self._allow()
-        base = [self._detect_base(f.text, allow) if f else [] for f in folded]
+        try:
+            # Recognizers with find_batch (the LLM backend) run ONCE for the whole document.
+            batched = self._find_batches([f.text for f in folded if f is not None])
+            base: list[list[Span]] = []
+            k = 0
+            for f in folded:
+                if f is None:
+                    base.append([])
+                    continue
+                pre = {rid: results[k] for rid, results in batched.items()}
+                base.append(self._detect_base(f.text, allow, pre))
+                k += 1
+        finally:
+            self._collect_warnings()
+        # Person groups (LLM backend): only groups whose canonical spelling is itself a PERSON
+        # span of this document count, and every span of a grouped spelling gets the group -
+        # also where the request that saw it could not know the full name.
+        groups, persons = _person_groups(base)
+        base = [_regroup(spans, groups, persons) for spans in base]
         matchers = self._matchers(self._collect_values(base, self._extra_known(known)))
         out = []
         for f, spans in zip(folded, base):
             if f is None:
                 out.append([])
                 continue
-            spans = self._birth_after_person(f.text, self._propagate(f.text, spans, matchers))
+            spans = self._birth_after_person(f.text,
+                                             self._propagate(f.text, spans, matchers, groups))
             out.append([f.to_orig(sp) for sp in spans])
         return out
 
@@ -509,7 +554,35 @@ class Detector:
         allow = set(self.cfg.allowlist)
         return allow | {fold_text(a) for a in allow}
 
-    def _detect_base(self, text: str, allow: set[str] | None = None) -> list[Span]:
+    def _find_batches(self, texts: list[str]) -> dict[int, list[list[Span]]]:
+        """{id(recognizer): spans per text} for recognizers with find_batch (one call for the
+        whole document: the LLM backend packs short texts into few requests). Only used for
+        more than one text; a single text goes through find()."""
+        out: dict[int, list[list[Span]]] = {}
+        if len(texts) < 2:
+            return out
+        for rec in self.recognizers:
+            find_batch = getattr(rec, "find_batch", None)
+            if not callable(find_batch):
+                continue
+            res = list(find_batch(texts, self.cfg))
+            if len(res) != len(texts):
+                raise ValueError(f"recognizer {getattr(rec, 'name', rec)!r} returned "
+                                 f"{len(res)} results for {len(texts)} texts")
+            out[id(rec)] = res
+        return out
+
+    def _collect_warnings(self) -> None:
+        for rec in self.recognizers:
+            pending = getattr(rec, "warnings", None)
+            if isinstance(pending, list) and pending:
+                for w in pending:
+                    if isinstance(w, str) and w not in self.warnings:
+                        self.warnings.append(w)
+                pending.clear()
+
+    def _detect_base(self, text: str, allow: set[str] | None = None,
+                     pre: dict[int, list[Span]] | None = None) -> list[Span]:
         if not text:
             return []
         cfg = self.cfg
@@ -517,13 +590,14 @@ class Detector:
             allow = self._allow()
         found: list[Span] = []
         for rec in self.recognizers:
-            for sp in rec.find(text, cfg):
+            spans = pre[id(rec)] if pre and id(rec) in pre else rec.find(text, cfg)
+            for sp in spans:
                 if text[sp.start:sp.end] != sp.text:
                     raise ValueError(f"recognizer {getattr(rec, 'name', rec)!r} returned a span "
                                      f"that does not match the text at {sp.start}:{sp.end}")
                 if cfg.is_enabled(sp.entity) and sp.text not in allow and sp.score >= cfg.min_score:
                     found.append(sp)
-        return resolve_overlaps(found, self._is_keep)
+        return _carry_groups(resolve_overlaps(found, self._is_keep), found)
 
     def _is_keep(self, entity: str) -> bool:
         return self.cfg.action_for(entity) == "keep"
@@ -576,7 +650,8 @@ class Detector:
                 out.append((ent, _ValueMatcher(ent, values[ent], self._posts)))
         return out
 
-    def _propagate(self, text: str, spans: list[Span], matchers: list[tuple[str, object]]) -> list[Span]:
+    def _propagate(self, text: str, spans: list[Span], matchers: list[tuple[str, object]],
+                   groups: dict[tuple[str, str], str] | None = None) -> list[Span]:
         """Add propagated matches that do not clash with detected spans.
 
         A match is added where nothing overlaps it, or replaces same-entity spans it fully
@@ -587,7 +662,9 @@ class Detector:
         """
         if not text or not matchers:
             return spans
-        cands = [Span(s, e, ent, text[s:e], PROPAGATE_SCORE, PROPAGATE_SOURCE)
+        groups = groups or {}
+        cands = [Span(s, e, ent, text[s:e], PROPAGATE_SCORE, PROPAGATE_SOURCE,
+                      groups.get((ent, text[s:e])))
                  for ent, matcher in matchers for s, e in matcher.find(text)]
         if not cands:
             return spans
@@ -613,6 +690,58 @@ class Detector:
 
 
 _GIVEN = "\0given"   # internal key of the given-name value set
+
+
+def _carry_groups(kept: list[Span], found: list[Span]) -> list[Span]:
+    """A person group (LLM backend) survives losing an overlap: the winning span of the same
+    entity takes the group of a grouped span it overlaps (a rule found "서윤" with a higher
+    score than the LLM span that knew it is "박서윤")."""
+    grouped = [sp for sp in found if sp.group]
+    if not grouped:
+        return kept
+    out = []
+    for sp in kept:
+        if sp.group is None:
+            g = next((x.group for x in grouped
+                      if x.entity == sp.entity and x.start < sp.end and sp.start < x.end), None)
+            if g is not None:
+                sp = Span(sp.start, sp.end, sp.entity, sp.text, sp.score, sp.source, g)
+        out.append(sp)
+    return out
+
+
+def _person_groups(span_lists: list[list[Span]]
+                   ) -> tuple[dict[tuple[str, str], str], set[str]]:
+    """((entity, value) -> person group, PERSON span texts) for the spans of one document.
+
+    A group counts only when its canonical spelling is itself a detected PERSON span of the
+    document (a model that writes person "어머니" for "오정애" does not make "어머니" a name
+    or the restore value). The first valid group of a spelling is used where a span of that
+    spelling has none, so "서윤" gets the pseudonym of "박서윤" in every chunk and request,
+    and a propagated copy keeps it too."""
+    persons = {sp.text for spans in span_lists for sp in spans if sp.entity == E.PERSON}
+    out: dict[tuple[str, str], str] = {}
+    for spans in span_lists:
+        for sp in spans:
+            if sp.group and sp.group in persons and sp.group != sp.text:
+                out.setdefault((sp.entity, sp.text), sp.group)
+    return out, persons
+
+
+def _regroup(spans: list[Span], groups: dict[tuple[str, str], str], persons: set[str]
+             ) -> list[Span]:
+    """Spans with their person group checked: an invalid group is dropped, a missing one is
+    filled in from `groups` (see _person_groups)."""
+    if not groups and not any(sp.group for sp in spans):
+        return spans
+    out = []
+    for sp in spans:
+        own = sp.group if sp.group and sp.group in persons and sp.group != sp.text else None
+        g = own or groups.get((sp.entity, sp.text))
+        if g != sp.group:
+            sp = Span(sp.start, sp.end, sp.entity, sp.text, sp.score, sp.source, g)
+        out.append(sp)
+    return out
 
 
 def _propagatable(value: str) -> bool:

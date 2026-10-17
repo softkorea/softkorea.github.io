@@ -9,8 +9,14 @@
     deid serve                                  로컬 웹 화면
     deid check out.deid.txt --llm gemma3:4b     로컬 LLM으로 남은 개인정보 점검
     deid doctor                                 설치 상태 점검
+    deid key set deid-strata                    진료실 LLM 서버의 API 키를 키체인에 저장 (macOS)
 
 Exit codes: 0 ok, 1 nothing done / suspicions found / cancelled, 2 error or a file failed.
+
+With ``[ner] backend = "openai"`` (an OpenAI-compatible server such as Strata on the clinic
+PC) every detecting command prints a warning to stderr once when the ORIGINAL text leaves this
+computer; an LLM failure with ``on_error = "fail"`` stops the command with exit code 2 and no
+output. API keys are never read from argv, printed or written anywhere by this module.
 """
 from __future__ import annotations
 
@@ -27,7 +33,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Sequence
+from typing import TYPE_CHECKING, Iterable, Iterator, Sequence
 
 from . import __version__, formats, mac
 
@@ -63,6 +69,7 @@ EXAMPLES = _columns([
     ("deid serve", "브라우저에서 쓰는 로컬 화면"),
     ("deid check 결과.deid.txt", "로컬 LLM으로 남은 개인정보 점검"),
     ("deid doctor", "설치 상태 점검"),
+    ("deid key set deid-strata", "진료실 LLM 서버의 API 키를 키체인에 저장 (macOS)"),
 ])
 FILE_EXAMPLES = _columns([
     ("deid file 진료기록.docx", "-> deid_out/진료기록.deid.docx (원본 옆)"),
@@ -416,6 +423,61 @@ def _notify(enabled: bool, title: str, message: str) -> None:
         mac.notify(title, message)
 
 
+# ---------------------------------------------------------------------- LLM server ([ner]/[llm])
+
+# LLMError kinds after which the remaining files of a `deid file` run are not tried: the server
+# is unreachable or refuses the key, so every file would fail the same way (and wait for the
+# timeout each time).
+_LLM_STOP_KINDS = frozenset({"key", "auth", "timeout", "connection", "redirect", "not_found"})
+LLM_HINT = ("-> 'deid doctor'로 LLM 서버 연결과 API 키를 확인하세요 (run 'deid doctor' to check "
+            "the LLM server and the API key)")
+_notices_shown: set[str] = set()
+
+
+def _transport_notice(cfg: "Config") -> None:
+    """Warn on stderr, once per command, when [ner] sends the ORIGINAL text to an LLM server
+    outside this computer (an OpenAI-compatible backend such as Strata on the clinic PC)."""
+    from .watch import transport_notice
+
+    msg = transport_notice(cfg)
+    if msg and msg not in _notices_shown:
+        _notices_shown.add(msg)
+        _err(f"! {msg}")
+
+
+def _is_llm_error(e: BaseException) -> bool:
+    """True for backends.openai_compat.LLMError (server down, key refused, no usable answer).
+    Its message never contains document text or the API key."""
+    if type(e).__name__ != "LLMError":
+        return False
+    try:
+        from .backends.openai_compat import LLMError
+    except Exception:  # noqa: BLE001  # pragma: no cover
+        return False
+    return isinstance(e, LLMError)
+
+
+def _drain(detector: object) -> list[str]:
+    """Pending detector warnings (LLM backend with on_error = "rules_only"), removed from it."""
+    drain = getattr(detector, "drain_warnings", None)
+    return list(drain()) if callable(drain) else []
+
+
+def _llm_fell_back(warnings: Iterable[str]) -> bool:
+    """True when the LLM pass failed and on_error = "rules_only" applied only the rules."""
+    from .backends.openai_compat import is_fallback_warning
+
+    return any(is_fallback_warning(w) for w in warnings)
+
+
+def _fallback_note(warnings: Iterable[str]) -> str:
+    """" - LLM 탐지 실패: 규칙만 적용" for notifications (stderr is not seen from a keyboard
+    shortcut or a Finder Quick Action), else ""."""
+    from .backends.openai_compat import FALLBACK_NOTE
+
+    return f" - {FALLBACK_NOTE}" if _llm_fell_back(warnings) else ""
+
+
 # ---------------------------------------------------------------------- deid file
 
 
@@ -512,7 +574,11 @@ def cmd_file(args: argparse.Namespace) -> int:
             _err(f"FAIL {disp}: {msg}")
         results.append({"source": disp, "ok": False, "error": msg})
     n_ok = 0
+    n_stopped = 0
+    llm_failed = False
+    fallback_warnings: list[str] = []   # Report.warnings of the files done (for --notify)
     if jobs:
+        _transport_notice(cfg)
         if args.vault or args.session:   # --vault wins over --session
             scope = _vault_scope(args.vault or None, save=not args.dry_run)
         else:
@@ -521,8 +587,16 @@ def cmd_file(args: argparse.Namespace) -> int:
             det = _detector(cfg, vault)
             anonymizer = Anonymizer(cfg, vault)
             taken: set[Path] = set()
+            stopped = llm_failed = False
             for job in jobs:
                 disp = _display(job.src, job.base)
+                if stopped:   # the LLM server is down or refuses the key: do not even try
+                    msg = ("처리하지 않음 - 앞 파일에서 LLM 서버 문제가 있었습니다 (not processed: "
+                           "LLM server problem)")
+                    results.append({"source": str(job.src), "ok": False, "error": msg})
+                    failures.append((disp, msg))
+                    n_stopped += 1
+                    continue
                 try:
                     if args.dry_run:
                         with tempfile.TemporaryDirectory(prefix="deid-dry-") as td:
@@ -537,12 +611,19 @@ def cmd_file(args: argparse.Namespace) -> int:
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:  # noqa: BLE001 - report and continue with the next file
+                    _drain(det)   # warnings of the failed file must not reach the next one
                     msg = _first_line(e)
                     if not as_json:
                         _err(f"FAIL {disp}: {msg}")
                     results.append({"source": str(job.src), "ok": False, "error": msg})
                     failures.append((disp, msg))
+                    if _is_llm_error(e):
+                        llm_failed = True
+                        stopped = getattr(e, "kind", "") in _LLM_STOP_KINDS
                     continue
+                # e.g. from the de-identified file name (one more detection after the content)
+                report.warnings.extend(w for w in _drain(det) if w not in report.warnings)
+                fallback_warnings.extend(report.warnings)
                 n_ok += 1
                 summary = _summary(report, cfg)
                 entry = report.to_dict()
@@ -564,13 +645,19 @@ def cmd_file(args: argparse.Namespace) -> int:
         if skipped:
             shown = ", ".join(f"{ext} {n}" for ext, n in sorted(skipped.items()))
             _err(f"건너뜀 (skipped, unsupported): {shown}")
+        if n_stopped:
+            _err(f"LLM 서버 문제로 나머지 파일 {n_stopped}개는 처리하지 않았습니다 (stopped: {n_stopped} "
+                 f"file(s) not processed)\n  {LLM_HINT}")
+        elif llm_failed:
+            _err(f"  {LLM_HINT}")
         if n_ok + n_fail:
             _out(f"완료: 성공 {n_ok}개, 실패 {n_fail}개 (done: {n_ok} ok, {n_fail} failed)")
         if n_ok and not args.dry_run:
             _out("자동 탐지는 완벽하지 않습니다. 공유하기 전에 결과를 확인하세요.")
     if args.notify:   # counts only: file names may contain patient names (lock screen)
         _notify(True, "deid 실패 있음" if n_fail else "deid 비식별화 완료",
-                f"성공 {n_ok}개, 실패 {n_fail}개" + (" - 결과를 확인하세요" if n_ok else ""))
+                f"성공 {n_ok}개, 실패 {n_fail}개" + _fallback_note(fallback_warnings)
+                + (" - 결과를 확인하세요" if n_ok else ""))
     if n_fail:
         return EXIT_FAIL
     return EXIT_OK if n_ok else EXIT_NOTHING
@@ -605,12 +692,15 @@ def cmd_text(args: argparse.Namespace) -> int:
     from .anonymizer import Anonymizer
     from .formats.text import deid_text
 
+    _transport_notice(cfg)
     with _vault_scope(args.vault) as vault:
         try:
             out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
-        except RuntimeError as e:  # e.g. a [ner] backend that is not installed: no output at all
+        except RuntimeError as e:  # a [ner] backend that is not installed, an LLM server that
+            # failed with on_error = "fail" (LLMError): no output at all
+            hint = LLM_HINT if _is_llm_error(e) else "-> 'deid doctor'로 확인하세요 (run 'deid doctor')"
             raise CliError(f"비식별화하지 못했습니다 - 아무것도 출력하지 않았습니다 (failed; nothing "
-                           f"written): {e}\n  -> 'deid doctor'로 확인하세요 (run 'deid doctor')") from e
+                           f"written): {e}\n  {hint}") from e
     _write_stdout(out)
     if not args.quiet:
         _err(f"비식별화 (de-identified): {_summary(report, cfg)}")
@@ -646,7 +736,8 @@ def _clip_image(cfg: "Config", notify: bool) -> int:
     _err(f"이미지 가림 완료 (image redacted): {summary}")
     for w in report.warnings:
         _err(f"   ! {w}")
-    _notify(notify, "deid 이미지 가림 완료", f"{summary} - 붙여넣기 전에 확인하세요")
+    _notify(notify, "deid 이미지 가림 완료",
+            f"{summary}{_fallback_note(report.warnings)} - 붙여넣기 전에 확인하세요")
     return EXIT_OK
 
 
@@ -663,6 +754,7 @@ def _clip(cfg: "Config", notify: bool) -> int:
     text = mac.paste_text()
     if not text.strip():
         if mac.info_has_image(info):
+            _transport_notice(cfg)
             return _clip_image(cfg, notify)
         if not text and info.strip():
             # Neither text nor an image (e.g. PDF data): we cannot check it, so it must go.
@@ -677,6 +769,7 @@ def _clip(cfg: "Config", notify: bool) -> int:
     from .anonymizer import Anonymizer
     from .formats.text import deid_text
 
+    _transport_notice(cfg)
     with _vault_scope(None) as vault:
         out, report = deid_text(text, _detector(cfg, vault), Anonymizer(cfg, vault))
     mac.copy_text(out)
@@ -684,7 +777,8 @@ def _clip(cfg: "Config", notify: bool) -> int:
     _err(f"비식별화 완료, 클립보드에 복사함 (de-identified, copied): {summary}")
     for w in report.warnings:
         _err(f"   ! {w}")
-    _notify(notify, "deid 비식별화 완료", f"{summary} - 붙여넣기 전에 확인하세요")
+    _notify(notify, "deid 비식별화 완료",
+            f"{summary}{_fallback_note(report.warnings)} - 붙여넣기 전에 확인하세요")
     return EXIT_OK
 
 
@@ -704,6 +798,10 @@ def cmd_clip(args: argparse.Namespace) -> int:
         raise
     except Exception as e:  # noqa: BLE001 - never leave the original in place silently
         detail = e.message if isinstance(e, CliError) else _first_line(e)
+        if _is_llm_error(e):   # the server is down or refused the key (on_error = "fail")
+            return _clip_failed(args.notify, f"{detail}\n  {LLM_HINT}",
+                                "LLM 서버 문제로 처리하지 못해 클립보드를 비웠습니다 - deid doctor로 "
+                                "확인하세요")
         keychain = "키체인" in detail
         return _clip_failed(args.notify, detail,
                             "키체인이 잠겨 있어 처리하지 못했습니다. 잠금을 풀고 다시 시도하세요 "
@@ -811,6 +909,7 @@ def cmd_shot(args: argparse.Namespace) -> int:
                      "선택하면 원본이 클립보드로 갑니다) (capture went to the clipboard: cleared)")
                 _notify(args.notify, "deid 실패", "캡처를 처리하지 못해 클립보드를 비웠습니다")
                 return EXIT_FAIL
+        _transport_notice(cfg)
         try:
             prepare_work_dir(outdir)
             dst = _unique_file(outdir / f"shot-{datetime.now():%Y%m%d-%H%M%S}.png")
@@ -819,7 +918,8 @@ def cmd_shot(args: argparse.Namespace) -> int:
             if from_clipboard:
                 mac.clear_clipboard()
             _err(f"스크린샷 비식별화 실패, 저장하지 않았습니다 (screenshot failed, not saved): "
-                 f"{_first_line(e)}" + (" - 클립보드를 비웠습니다" if from_clipboard else ""))
+                 f"{_first_line(e)}" + (" - 클립보드를 비웠습니다" if from_clipboard else "")
+                 + (f"\n  {LLM_HINT}" if _is_llm_error(e) else ""))
             _notify(args.notify, "deid 실패", "스크린샷을 처리하지 못했습니다")
             return EXIT_FAIL
     summary = _summary(report, cfg)
@@ -838,7 +938,8 @@ def cmd_shot(args: argparse.Namespace) -> int:
     _out(f"OK {dst} ({summary})" + (" - 클립보드에 복사함" if copied else ""))
     for w in report.warnings:
         _err(f"   ! {w}")
-    _notify(args.notify, "deid 스크린샷 가림 완료", f"{summary} - 결과를 확인하세요")
+    _notify(args.notify, "deid 스크린샷 가림 완료",
+            f"{summary}{_fallback_note(report.warnings)} - 결과를 확인하세요")
     return EXIT_OK
 
 
@@ -885,7 +986,8 @@ def cmd_install_watch(args: argparse.Namespace) -> int:
     mac.require_macos("deid install-watch")
     # The agent reads the default config file: one that does not load would stop it at every
     # start (launchd retries every 30 s), so refuse now with the reason.
-    _load_cfg(None)
+    cfg = _load_cfg(None)
+    _transport_notice(cfg)      # the agent will send originals to the LLM server too
     prepare_work_dir(in_dir)    # owner-only (0700): other accounts must not read originals
     prepare_work_dir(out_dir)
     path = mac.install_watch_agent(plist)
@@ -980,12 +1082,33 @@ def _zip_paragraphs(path: Path, part_rx: str, para: str, text_tags: tuple[str, .
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    from .backends import ollama
+    """Ask an LLM which identifiers remain in a de-identified file: Ollama on this computer
+    (default) or, with ``[llm] backend = "openai"``, an OpenAI-compatible server such as Strata.
+    Only de-identified text is sent: an original file is de-identified first, and a remote
+    server never gets a file as it is (--as-is) unless it looks like a deid output."""
+    from .backends import openai_compat as oc
 
     cfg = _load_cfg(args.config)
     path = Path(args.path).expanduser()
     if not path.is_file():
         raise CliError("파일이 없습니다 (file not found)")
+    conf = None
+    if oc.llm_backend(cfg) == "openai":
+        section = oc.llm_section(cfg)
+        if args.host:
+            section["base_url"] = args.host
+        if args.llm:
+            section["model"] = args.llm
+        try:
+            conf = oc.settings(section, "llm")
+        except ValueError as e:   # remote host without allow_remote, bad URL ...
+            raise CliError(_first_line(e)) from e
+        if conf.is_remote and args.as_is and not formats.is_deid_output(path):
+            raise CliError(
+                f"--as-is: 이 파일은 deid 결과(이름.deid.확장자)로 보이지 않습니다. 이 컴퓨터 밖의 LLM 서버"
+                f"({conf.host})로는 비식별화하지 않았을 수도 있는 글을 그대로 보내지 않습니다. --as-is 없이 "
+                "실행하면 먼저 비식별화한 결과를 검사합니다 (refusing to send a file that may be original "
+                "to a remote server; run without --as-is)")
     try:
         text = extract_text(path, cfg)
     except CliError:
@@ -998,7 +1121,18 @@ def cmd_check(args: argparse.Namespace) -> int:
 
         _err("원본 파일로 보여 먼저 비식별화한 결과를 검사합니다 (input looks original: checking the "
              "de-identified version; use --as-is to check the file as it is)")
-        text, _ = deid_text(text, _detector(cfg), Anonymizer(cfg))
+        _transport_notice(cfg)
+        try:
+            text, _ = deid_text(text, _detector(cfg), Anonymizer(cfg))
+        except RuntimeError as e:   # e.g. the [ner] LLM server failed (on_error = "fail")
+            hint = LLM_HINT if _is_llm_error(e) else "-> 'deid doctor'로 확인하세요 (run 'deid doctor')"
+            raise CliError(f"먼저 비식별화하지 못해 검사하지 않았습니다 - 아무것도 보내지 않았습니다 "
+                           f"(could not de-identify first; nothing sent): {e}\n  {hint}"
+                           ) from e
+    if conf is not None:
+        return _check_openai(text, conf, cfg)
+    from .backends import ollama
+
     model = args.llm or (cfg.llm or {}).get("model") or DEFAULT_LLM
     host = args.host or (cfg.llm or {}).get("host") or ollama.DEFAULT_HOST
     allow_remote = bool((cfg.llm or {}).get("allow_remote", False))
@@ -1012,21 +1146,44 @@ def cmd_check(args: argparse.Namespace) -> int:
         raise CliError(_first_line(e)) from e
     except ollama.OllamaError as e:
         raise CliError(f"LLM 검사 실패 (LLM check failed): {_first_line(e)}") from e
+    return _show_check(items, text, cfg, model)
+
+
+def _check_openai(text: str, conf, cfg: "Config") -> int:
+    """`deid check` with an OpenAI-compatible server ([llm] backend = "openai")."""
+    from .backends import openai_compat as oc
+
+    notice = oc.transport_warning(conf, raw_text=False)
+    if notice:
+        _err(f"! {notice}")
+    name = f"{conf.model} ({conf.host})" if conf.is_remote else conf.model
+    try:
+        items = oc.review(text, conf)
+    except oc.LLMError as e:
+        raise CliError(f"LLM 검사 실패 (LLM check failed): {_first_line(e)}\n  {LLM_HINT}") from e
+    except ValueError as e:
+        raise CliError(_first_line(e)) from e
+    return _show_check(items, text, cfg, name)
+
+
+def _show_check(items: list[dict], text: str, cfg: "Config", name: str) -> int:
     if not items:
-        _out(f"{model}: 남은 개인정보 의심 항목이 없습니다 (no suspected leftovers). "
+        _out(f"{name}: 남은 개인정보 의심 항목이 없습니다 (no suspected leftovers). "
              "LLM 검사도 완벽하지 않으니 직접 확인하세요.")
         return EXIT_OK
     from . import entities as E
 
     lines = text.splitlines()
-    _out(f"{model}: 남은 개인정보로 의심되는 항목 {len(items)}개 (suspected leftovers; shown here "
+    _out(f"{name}: 남은 개인정보로 의심되는 항목 {len(items)}개 (suspected leftovers; shown here "
          "only, never saved):")
     for it in items:
         where = [str(i + 1) for i, ln in enumerate(lines) if it["text"] in ln][:5]
         label = cfg.label_for(it["entity"]) if it.get("entity") else E.label("OTHER")
-        reason = f" - {it['reason']}" if it.get("reason") else ""
+        # text and reason come from the LLM server: printable characters only (no terminal
+        # control sequences such as cursor moves or OSC 52 clipboard writes), length-limited
+        reason = f" - {_shown_value(it['reason'], 200)}" if it.get("reason") else ""
         line_info = f" (줄 {', '.join(where)})" if where else ""
-        _out(f"  - [{label}] {it['text']}{line_info}{reason}")
+        _out(f"  - [{_shown_value(label, 40)}] {_shown_value(it['text'], 120)}{line_info}{reason}")
     _out("확인 후 원본을 고치거나 설정의 names/patterns에 추가한 뒤 다시 비식별화하세요.")
     return EXIT_NOTHING
 
@@ -1131,6 +1288,143 @@ def _doctor_config(doc: "_Doctor", cfg_path: Path) -> "Config | None":
     return cfg
 
 
+class _Skip(Exception):
+    """Internal: skip the rest of a doctor section."""
+
+
+def _shown_value(value: object, limit: int = 60) -> str:
+    """A value the LLM server sent (model id, /health field), safe for the terminal."""
+    if isinstance(value, bool) or value is None:
+        return str(value).lower()
+    text = "".join(ch for ch in str(value) if ch.isprintable())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _key_source_text(label: str) -> str:
+    """Where the API key came from, from resolve_api_key's label - never the key."""
+    if label.startswith("env:"):
+        return f"환경변수 {label[4:]}에서 찾음 (found in env {label[4:]})"
+    if label.startswith("keychain:"):
+        return f"키체인 항목 '{label[9:]}'(계정 deid)에서 찾음 (found in the Keychain)"
+    return "설정 안 함 - 키 없이 접속합니다 (no key configured)"
+
+
+def _doctor_llm_servers(doc: "_Doctor", cfg: "Config") -> bool:
+    """`deid doctor` lines for [ner] / [llm] backend = "openai" (e.g. Strata on the clinic PC):
+    settings, where the API key comes from (never the key), /health and the first model id,
+    and [!!] for raw text leaving this computer, unencrypted http, a missing key and an
+    unreachable server or a refused key. Returns True when [llm] uses such a server."""
+    from .backends import openai_compat as oc
+
+    tables = []
+    if oc.ner_enabled(cfg):
+        tables.append(("ner", oc.ner_section(cfg)))
+    llm_openai = oc.llm_backend(cfg) == "openai"
+    if llm_openai:
+        tables.append(("llm", oc.llm_section(cfg)))
+    checked: dict[tuple, str] = {}
+    for table, section in tables:
+        use = "탐지 (detection)" if table == "ner" else "deid check"
+        title = f"LLM 서버 [{table}] {use}"
+        try:
+            conf = oc.settings(section, table)
+        except ValueError as e:
+            doc.item("fail", title, _first_line(e), "설정 파일을 고친 뒤 다시 deid doctor")
+            continue
+        detail = (f"{conf.base_url}, model {conf.model}, effort {conf.effort}, allow_remote "
+                  f"{str(conf.allow_remote).lower()}")
+        if table == "ner":
+            detail += f", on_error {conf.on_error}, batch_chars {conf.batch_chars}"
+        doc.item("ok", title, detail)
+        if conf.is_remote and table == "ner":
+            doc.item("warn", "원문이 이 Mac 밖으로 나감 (raw text leaves this Mac)",
+                     f"비식별화 전 진료 원문(이름·주민번호 등 포함)이 {conf.host}(으)로 전송됩니다",
+                     "의도한 것이 아니면 설정 파일의 [ner] backend 줄을 지우세요")
+        elif conf.is_remote:
+            doc.item("info", "deid check 전송 (sent for checking)",
+                     f"비식별화한 글만 {conf.host}(으)로 보냅니다 (de-identified text only)")
+        if conf.is_remote and conf.base_url.lower().startswith("http://"):
+            doc.item("warn", f"암호화되지 않은 연결 [{table}] (unencrypted http)",
+                     f"{conf.host}까지 글과 API 키가 암호화되지 않은 채 갑니다. 같은 네트워크의 다른 기기가 "
+                     "볼 수 있습니다",
+                     "병원 내부망(유선 또는 보안 Wi-Fi)에서만 쓰세요. 서버가 https를 지원하면 base_url을 "
+                     "https://로 바꾸세요")
+        if table == "ner" and conf.on_error == "rules_only":
+            doc.item("info", "LLM 서버 오류 때 (on_error)",
+                     "규칙 기반 탐지만으로 계속하고 결과에 경고를 남깁니다",
+                     "LLM이 찾던 것을 놓친 채 결과가 나올 수 있습니다. 권장: on_error = \"fail\"")
+        try:
+            key, label = oc.resolve_api_key(conf)
+        except oc.LLMError as e:
+            svc = conf.api_key_keychain
+            doc.item("warn", f"API 키 [{table}] (API key)", _first_line(e),
+                     f"deid key set {svc}" if svc else
+                     f"터미널에서 'read -rs {conf.api_key_env} && export {conf.api_key_env}' 후 키를 붙여넣거나 "
+                     "(키를 명령줄에 쓰지 마세요), 키체인을 쓰려면 deid key set deid-strata")
+            continue
+        del key   # never shown, never kept
+        doc.item("ok" if label != "none" else "info", f"API 키 [{table}] (API key)",
+                 _key_source_text(label))
+        sig = (conf.root, conf.api_key_env, conf.api_key_keychain)
+        if sig in checked:
+            doc.item("info", f"LLM 서버 응답 [{table}]", f"[{checked[sig]}]와 같은 서버 (same server)")
+            continue
+        checked[sig] = table
+        _doctor_llm_reply(doc, conf, table)
+    return llm_openai
+
+
+def _doctor_llm_reply(doc: "_Doctor", conf, table: str) -> None:
+    """GET /health and /v1/models of one server (short timeouts)."""
+    from .backends import openai_compat as oc
+
+    title = f"LLM 서버 응답 [{table}] (server)"
+    try:
+        info = oc.health(conf)
+    except oc.LLMError as e:
+        if e.kind == "auth":
+            hint = (f"deid key set {conf.api_key_keychain}로 키를 다시 넣으세요" if conf.api_key_keychain
+                    else "환경변수의 키 값을 확인하세요" if conf.api_key_env
+                    else "설정에 api_key_keychain = \"deid-strata\"를 적고 deid key set deid-strata")
+        elif e.kind in ("connection", "timeout"):
+            host = _url_host(conf.host)
+            hint = "서버 PC가 켜져 있고 Strata가 실행 중인지, 같은 네트워크에 있는지 확인하세요"
+            if host and oc.is_ip_literal(host) and not oc.is_loopback(host):
+                hint += (f". PC의 IP 주소가 {host}에서 바뀌었을 수 있습니다 (Windows: ipconfig). 바뀌지 "
+                         "않도록 공유기에서 고정(DHCP 예약)해 두세요")
+        else:
+            hint = "base_url이 …/v1 로 끝나는 OpenAI 호환 주소인지 확인하세요"
+        doc.item("warn", title, _first_line(e), hint)
+        return
+    loaded = info.get("loaded")
+    detail = (f"{conf.host} 응답함, /health loaded={_shown_value(loaded)}"
+              + (f", images={_shown_value(info.get('images'))}" if "images" in info else ""))
+    hint = ""
+    status = "ok"
+    if loaded is False:
+        status, hint = "warn", "서버에 모델이 아직 올라오지 않았습니다. 잠시 뒤 다시 확인하세요"
+    try:
+        models = oc.list_models(conf)
+    except oc.LLMError as e:
+        doc.item(status, title, detail, hint)
+        doc.item("warn", f"LLM 서버 모델 목록 [{table}] (/v1/models)", _first_line(e),
+                 "API 키를 확인하세요 (deid key status 이름)" if e.kind == "auth" else "")
+        return
+    if models:
+        detail += f", 모델 {_shown_value(models[0])}" + (f" 외 {len(models) - 1}개" if len(models) > 1
+                                                       else "")
+    else:
+        detail += ", 모델 목록 비어 있음"
+    doc.item(status, title, detail, hint)
+
+
+def _url_host(netloc: str) -> str:
+    """Host of "192.168.0.20:8080" as written (case kept); "" for an IPv6 literal."""
+    if netloc.startswith("["):
+        return ""
+    return netloc.rsplit(":", 1)[0] if ":" in netloc else netloc
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     import importlib.util
 
@@ -1225,9 +1519,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                      "" if ok else install_hint(*(("transformers", "torch") if backend == "hf"
                                                   else ("gliner",))))
 
+    # OpenAI-compatible LLM server (Strata on the clinic PC): [ner] and/or [llm]
+    try:
+        llm_openai = _doctor_llm_servers(doc, cfg)
+    except Exception as e:  # noqa: BLE001 - the check itself must not break doctor
+        llm_openai = False
+        doc.item("warn", "LLM 서버 (LLM server)", _first_line(e))
+
     # Ollama
     try:
         from .backends import ollama
+        if llm_openai:
+            raise _Skip
         host = (cfg.llm or {}).get("host") or ollama.DEFAULT_HOST
         model = (cfg.llm or {}).get("model") or DEFAULT_LLM
         if ollama.available(host, timeout=2.0, allow_remote=bool((cfg.llm or {}).get("allow_remote"))):
@@ -1239,6 +1542,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             doc.item("info", "Ollama (선택: deid check)", f"{host} 연결 안 됨 (not reachable)",
                      f"https://ollama.com 에서 설치 후 실행, 그리고 ollama pull {model}")
+    except _Skip:   # deid check uses the [llm] OpenAI-compatible server instead
+        pass
     except Exception as e:  # noqa: BLE001
         doc.item("info", "Ollama (선택)", _first_line(e))
 
@@ -1355,16 +1660,31 @@ allowlist = [
 # hwpx_images = "auto"   # 한글(hwpx) 안의 그림: docx_images와 같음
 # max_image_pixels = 100000000   # 이보다 큰 그림은 처리하지 않음 (메모리 보호)
 
-# deid check 에서 쓰는 로컬 LLM (Ollama, 이 컴퓨터 안에서만 실행)
+# deid check 에서 쓰는 LLM. 기본은 이 컴퓨터의 Ollama입니다.
 [llm]
 # model = "gemma3:4b"
 # host = "http://127.0.0.1:11434"
+# 진료실 LLM 서버(OpenAI 호환, 예: Strata)로 점검하려면 (비식별화한 글만 보냅니다):
+# backend = "openai"
+# base_url = "http://192.168.0.20:8080/v1"   # 진료실 PC의 IP 주소 (http는 이름 대신 IP만; ipconfig로 확인)
+# api_key_keychain = "deid-strata"   # 키는 'deid key set deid-strata'로 키체인에 (설정 파일에 키 금지)
+# model = "strata"
+# effort = "none"
+# allow_remote = true                # 이 컴퓨터가 아닌 서버에 꼭 필요
 
-# 고급: 신경망 이름 인식 (설치 필요: pipx inject deid-kit gliner)
+# 고급: 탐지를 돕는 신경망/LLM. 기본은 꺼짐(규칙만).
 [ner]
-# backend = "gliner"     # hf | gliner | ollama
+# backend = "gliner"     # hf | gliner | ollama | openai (설치 필요: pipx inject deid-kit gliner)
 # model = "urchade/gliner_multi_pii-v1"
 # device = "mps"         # Apple Silicon GPU
+# 진료실 LLM 서버로 탐지하려면 (주의: 비식별화 전 원문이 그 PC로 갑니다. http는 암호화되지 않음):
+# backend = "openai"
+# base_url = "http://192.168.0.20:8080/v1"   # 진료실 PC의 IP 주소
+# api_key_keychain = "deid-strata"
+# model = "strata"
+# effort = "none"
+# allow_remote = true    # [ner]에 직접 적어야 합니다 ([llm]의 값은 쓰지 않음)
+# on_error = "fail"      # 서버 오류 때 멈춤(권장) | "rules_only" 규칙만으로 계속 + 경고
 
 # 병원 고유 번호 형식 추가 (정규식). 필요하면 아래 블록의 '#'을 지우세요.
 # [[patterns]]
@@ -1385,6 +1705,95 @@ def cmd_init_config(args: argparse.Namespace) -> int:
     path.write_text(EXAMPLE_CONFIG, encoding="utf-8")
     _out(f"설정 파일을 만들었습니다 (config written): {path}")
     _out("텍스트 편집기로 열어 names / allowlist 등을 고치세요. 확인: deid doctor")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------- key (LLM server API key)
+
+
+# What mac.keychain_set passes to `security -i` (one plain word); other keys are refused there.
+_KEYCHAIN_SECRET = getattr(mac, "_KEYCHAIN_WORD", None) or re.compile(r"[A-Za-z0-9._@+-]{1,256}")
+
+
+def _env_key_help(name: str = "STRATA_API_KEY") -> str:
+    return (f"설정 파일의 [ner]/[llm]에 api_key_env = \"{name}\"을 적고, deid를 실행할 터미널에서 "
+            f"'read -rs {name} && export {name}'을 실행한 뒤 키를 붙여넣고 Enter를 누르세요(화면에 보이지 "
+            "않습니다). 키를 명령줄이나 설정 파일, ~/.zshrc 같은 파일에 그대로 적지 마세요 (use an environment "
+            "variable instead: api_key_env)")
+
+
+def cmd_key(args: argparse.Namespace) -> int:
+    """`deid key set|delete|status NAME`: the API key of an LLM server in the macOS Keychain
+    (account "deid", service NAME; config: api_key_keychain = "NAME").
+
+    The key is read with getpass (never from argv, never echoed) and stored through
+    mac.keychain_set, which hands it to `security -i` on stdin. Nothing here prints the key;
+    `status` only says whether the item exists."""
+    from .backends import openai_compat as oc
+    from .session import KEYCHAIN_SERVICE
+
+    name = (args.name or "").strip()
+    if name.casefold() == KEYCHAIN_SERVICE.casefold():
+        raise CliError(f"'{KEYCHAIN_SERVICE}'은 deid 세션 보관함의 열쇠라 쓸 수 없습니다. 다른 이름(예: "
+                       "deid-strata)을 쓰세요 (reserved for the session vault key)")
+    try:
+        _, valid = oc.key_sources({"api_key_keychain": name}, "key")
+    except ValueError:
+        valid = None
+    if not valid:   # the message never repeats NAME: it may be a key typed in the wrong place
+        raise CliError(
+            "키체인 항목 이름은 영문 소문자·숫자와 . _ - 로 된 64자 이하의 이름이어야 합니다 (예: deid-strata). "
+            "키 값 자체를 이름 자리에 넣지 마세요: 명령줄에 쓴 글은 터미널 기록에 남습니다. 키를 실수로 적었다면 "
+            "서버에서 새 키로 바꾸는 것이 안전합니다 (invalid Keychain item name; never type the key itself "
+            "on the command line)")
+    if not mac.is_macos():
+        raise CliError("키체인은 macOS에만 있습니다. 이 컴퓨터에서는 환경변수를 쓰세요: "
+                       + _env_key_help() + " (Keychain: macOS only)")
+    account = oc.KEYCHAIN_ACCOUNT
+    if args.action == "status":
+        found = mac.keychain_get(account, valid) is not None   # MacError: locked, cancelled
+        if found:
+            _out(f"있음 (exists): 키체인 계정 {account}, 항목 {valid} - 키 값은 보여 주지 않습니다")
+            return EXIT_OK
+        _out(f"없음 (not found): 키체인 계정 {account}, 항목 {valid}. 넣기: deid key set {valid}")
+        return EXIT_NOTHING
+    if args.action == "delete":
+        if mac.keychain_delete(account, valid):
+            _out(f"삭제했습니다 (deleted): 키체인 계정 {account}, 항목 {valid}")
+            return EXIT_OK
+        _out(f"지울 항목이 없습니다 (not found): 키체인 계정 {account}, 항목 {valid}")
+        return EXIT_NOTHING
+    # set
+    if not _can_prompt():
+        raise CliError("API 키를 입력할 터미널 창이 없습니다. 터미널 앱에서 직접 실행하세요 (no terminal to "
+                       "ask for the key)")
+    _err(f"키체인(계정 {account}, 항목 {valid})에 넣을 API 키를 붙여넣고 Enter를 누르세요. 입력한 글자는 "
+         "화면에 보이지 않습니다. 이미 있으면 새 키로 바뀝니다.")
+    try:
+        secret = getpass.getpass("API 키 (API key): ")
+    except EOFError:
+        raise CliError("입력이 없어 저장하지 않았습니다 (no input: nothing stored)") from None
+    secret = secret.strip()
+    if not secret:
+        raise CliError("키가 비어 있어 저장하지 않았습니다 (empty key: nothing stored)")
+    if not _KEYCHAIN_SECRET.fullmatch(secret) or secret.startswith("-"):
+        secret = ""
+        raise CliError(
+            "이 키에는 deid가 키체인에 넣을 수 없는 글자(공백, / = : 등)가 있어 저장하지 않았습니다. 대신 터미널에서 "
+            f"'security add-generic-password -a {account} -s {valid} -U -w'를 실행하면 키를 물어보니 거기에 "
+            "붙여넣으세요(어떤 글자든 됩니다). 또는 " + _env_key_help() + " (the key has characters deid "
+            "cannot pass to the Keychain; use 'security add-generic-password ... -w' or an environment "
+            "variable)")
+    try:
+        ok = mac.keychain_set(account, valid, secret)
+    finally:
+        secret = ""
+    if not ok:
+        raise CliError("키체인에 저장하지 못했습니다. 로그인 키체인이 잠겨 있으면 키체인 접근 앱에서 잠금을 풀고 "
+                       "다시 시도하세요 (could not store the key in the Keychain)")
+    _out(f"저장했습니다 (stored): 키체인 계정 {account}, 항목 {valid}")
+    _out(f"설정 파일의 [ner] 또는 [llm]에 api_key_keychain = \"{valid}\"를 적고 'deid doctor'로 "
+         "확인하세요. 처음 쓸 때 macOS가 키체인 접근을 물으면 '허용'을 누르세요.")
     return EXIT_OK
 
 
@@ -1442,8 +1851,10 @@ def _parser(**kw) -> argparse.ArgumentParser:
 
 def build_parser() -> argparse.ArgumentParser:
     p = _parser(prog="deid",
-                description="한국어 개인정보 비식별화 도구 - 모든 처리는 이 컴퓨터 안에서만 합니다 "
-                            "(Korean-first local de-identification; nothing leaves this computer).",
+                description="한국어 개인정보 비식별화 도구 - 기본으로 모든 처리는 이 컴퓨터 안에서만 합니다. "
+                            "설정에서 진료실 LLM 서버를 탐지에 연결하면([ner] backend = \"openai\") 글이 그 "
+                            "서버로도 갑니다 (Korean-first local de-identification; by default nothing "
+                            "leaves this computer).",
                 epilog="사용 예 (examples):\n" + EXAMPLES +
                 "\n\n종료 코드 (exit codes): 0 성공, 1 할 일 없음/의심 항목 있음/취소, 2 오류")
     p.add_argument("--version", action=_VersionAction,
@@ -1547,12 +1958,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-browser", action="store_true", help="브라우저를 열지 않음 (do not open)")
     sp.set_defaults(func=cmd_serve)
 
-    sp = add("check", "로컬 LLM으로 남은 개인정보 점검 (LLM review via Ollama)",
-             "비식별화된 파일을 로컬 LLM(Ollama)으로 다시 읽어 남아 있을지 모르는 개인정보를 보여줍니다. "
-             "결과는 화면에만 표시하고 저장하지 않습니다.")
+    sp = add("check", "LLM으로 남은 개인정보 점검 (LLM review: Ollama or the [llm] server)",
+             "비식별화된 파일을 LLM으로 다시 읽어 남아 있을지 모르는 개인정보를 보여줍니다. 기본은 이 컴퓨터의 "
+             "Ollama이고, 설정에 [llm] backend = \"openai\"가 있으면 그 서버(예: 진료실 PC의 Strata)를 "
+             "씁니다. 원본 파일은 먼저 비식별화한 결과만 보냅니다. 결과는 화면에만 표시하고 저장하지 않습니다.")
     sp.add_argument("path", metavar="FILE", help="검사할 파일 (file to check)")
-    sp.add_argument("--llm", metavar="MODEL", help=f"모델 (Ollama model, default {DEFAULT_LLM})")
-    sp.add_argument("--host", metavar="URL", help="Ollama 주소 (default http://127.0.0.1:11434)")
+    sp.add_argument("--llm", metavar="MODEL",
+                    help=f"모델 (model; Ollama 기본 {DEFAULT_LLM}, openai 서버는 [llm] model)")
+    sp.add_argument("--host", metavar="URL",
+                    help="LLM 서버 주소: Ollama (기본 http://127.0.0.1:11434) 또는 [llm] backend = "
+                         "\"openai\"일 때의 base_url (예: http://192.168.0.20:8080/v1; 이 컴퓨터가 아니면 [llm] "
+                         "allow_remote = true 필요, http는 이름 대신 IP 주소)")
     sp.add_argument("--as-is", action="store_true",
                     help="비식별화하지 않고 그대로 검사 (check the text as it is)")
     sp.set_defaults(func=cmd_check)
@@ -1566,10 +1982,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_forget)
 
     sp = add("doctor", "설치 상태 점검 (environment check)",
-             "Python, 글자 인식(OCR: tesseract / Apple Vision), 설정 파일, Ollama, 작업 폴더를 "
-             "점검하고 고칠 방법을 알려줍니다. 문제가 있으면 이 결과를 그대로 보여주세요. "
+             "Python, 글자 인식(OCR: tesseract / Apple Vision), 설정 파일, LLM 서버(Ollama, 진료실 "
+             "LLM 서버), 작업 폴더를 점검하고 고칠 방법을 알려줍니다. API 키는 어디서 찾았는지만 보여 주고 값은 "
+             "보여 주지 않습니다. 문제가 있으면 이 결과를 그대로 보여주세요. "
              "(checks the installation and prints fixes)", parents=())
     sp.set_defaults(func=cmd_doctor)
+
+    sp = add("key", "LLM 서버 API 키를 키체인에 넣기/지우기/확인 (API key in the Keychain; macOS)",
+             "진료실 LLM 서버(예: Strata)의 API 키를 macOS 키체인(계정 deid, 항목 NAME)에 넣거나 지우거나 "
+             "있는지 확인합니다. set은 키를 화면에 보이지 않게 물어봅니다 - 키를 명령줄에 쓰지 마세요. 설정 "
+             "파일에는 api_key_keychain = \"NAME\"만 적습니다. (status never shows the key)",
+             parents=(),
+             epilog="사용 예 (examples):\n" + _columns([
+                 ("deid key set deid-strata", "키를 물어보고 키체인에 저장 (이미 있으면 바꿈)"),
+                 ("deid key status deid-strata", "있는지만 확인 (값은 보여 주지 않음)"),
+                 ("deid key delete deid-strata", "키체인에서 지우기"),
+             ]) + "\nmacOS가 아니면 환경변수를 쓰세요: api_key_env = \"STRATA_API_KEY\"")
+    sp.add_argument("action", choices=("set", "delete", "status"),
+                    help="set(넣기) | delete(지우기) | status(있는지 확인)")
+    sp.add_argument("name", metavar="NAME",
+                    help="키체인 항목 이름 = 설정의 api_key_keychain 값 (예: deid-strata)")
+    sp.set_defaults(func=cmd_key)
 
     sp = add("init-config", "예시 설정 파일 만들기 (write an example config)", parents=())
     sp.add_argument("--force", action="store_true", help="있어도 덮어쓰기 (overwrite)")
@@ -1604,6 +2037,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         purge_expired_session()
     except Exception:  # noqa: BLE001 - housekeeping never blocks a command
         pass
+    _notices_shown.clear()
     try:
         return int(args.func(args))
     except CliError as e:
@@ -1611,6 +2045,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return e.code
     except mac.MacError as e:
         _err(str(e))
+        return EXIT_FAIL
+    except RuntimeError as e:   # LLMError not handled by the command: no traceback
+        if not _is_llm_error(e):
+            raise
+        _err(f"LLM 서버 문제로 멈췄습니다 (stopped: LLM server problem): {_first_line(e)}\n  {LLM_HINT}")
         return EXIT_FAIL
     except KeyboardInterrupt:
         _err("중단했습니다 (interrupted)")

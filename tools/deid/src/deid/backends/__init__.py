@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from ..config import Config
     from ..recognizers.base import Recognizer
 
-OTHER = "OTHER"  # entity for identifiers an LLM reports without a known type
+OTHER = E.OTHER  # entity for identifiers an LLM reports without a known type
 
 _ALIASES: dict[str, tuple[str, ...]] = {
     E.PERSON: ("name", "person_name", "full_name", "patient", "patient_name", "doctor", "staff",
@@ -55,15 +55,43 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     E.PLATE: ("license_plate", "license_plate_number", "car_number", "vehicle_number", "차량번호"),
     E.URL: ("website",),
 }
+# Type words of the OpenAI-compatible backend's prompt (openai_compat.TYPES: 기관, 전화, 기타 ...)
+# and their synonyms. ONLY that backend uses them (llm_type_entity): the GLiNER, HF and Ollama
+# label mappings stay as they were, so e.g. a GLiNER label "organization" is still its own
+# (redacted) entity and an Ollama item typed 날짜 is still OTHER.
+_LLM_TYPE_ALIASES: dict[str, tuple[str, ...]] = {
+    E.PHONE: ("전화", "팩스"),
+    E.EMAIL: ("메일",),
+    E.CARD: ("카드",),
+    E.ACCOUNT: ("계좌",),
+    E.PASSPORT: ("여권",),
+    E.DRIVER_LICENSE: ("면허", "운전면허"),
+    # A model that types a visit date as 날짜 must not get it redacted as OTHER (DATE is kept).
+    E.DATE: ("날짜", "일자", "진료일", "방문일", "내원일"),
+    # Proper names of hospitals, clinics, pharmacies, companies, schools (the prompt's 기관):
+    # every synonym a model may pick maps to ORG, so the result does not depend on the word.
+    E.ORG: ("org", "organization", "organisation", "institution", "hospital", "clinic",
+            "pharmacy", "company", "school", "workplace", "employer",
+            "기관", "기관명", "기관·직장·학교", "직장", "직장명", "학교", "학교명", "회사", "회사명",
+            "병원", "병원명", "의원", "의원명", "약국", "약국명", "보건소"),
+    OTHER: ("기타", "other_identifier", "번호"),
+}
 _SEP = re.compile(r"[\s\-]+")
+
+# [ner] / [llm] backend names served by backends.openai_compat ("strata" = the clinic server).
+OPENAI_BACKENDS = frozenset({"openai", "strata", "openai_compat", "openai-compatible"})
 
 
 def _alias_key(label: str) -> str:
     return _SEP.sub("_", str(label).strip().casefold().replace("'", ""))
 
 
-ENTITY_ALIASES: dict[str, str] = {ent.casefold(): ent for ent in E.ALL}
+# ORG is produced only by the OpenAI-compatible backend (LLM_TYPE_ALIASES).
+ENTITY_ALIASES: dict[str, str] = {ent.casefold(): ent for ent in E.ALL if ent != E.ORG}
 ENTITY_ALIASES.update({a: ent for ent, names in _ALIASES.items() for a in names})
+LLM_TYPE_ALIASES: dict[str, str] = dict(ENTITY_ALIASES)
+LLM_TYPE_ALIASES.update({_alias_key(a): ent for ent, names in _LLM_TYPE_ALIASES.items()
+                         for a in names})
 
 
 def entity_for(label: object, default: str | None = OTHER) -> str | None:
@@ -71,6 +99,14 @@ def entity_for(label: object, default: str | None = OTHER) -> str | None:
     if not isinstance(label, str) or not label.strip():
         return default
     return ENTITY_ALIASES.get(_alias_key(label), default)
+
+
+def llm_type_entity(label: object, default: str | None = OTHER) -> str | None:
+    """entity_for for the OpenAI-compatible backend's type words (기관 -> ORG, 날짜 -> DATE,
+    전화 -> PHONE, 기타 -> OTHER ...)."""
+    if not isinstance(label, str) or not label.strip():
+        return default
+    return LLM_TYPE_ALIASES.get(_alias_key(label), default)
 
 
 def resolve_device(device: str | None) -> str:
@@ -188,7 +224,8 @@ def merge_spans(text: str, spans: list[Span]) -> list[Span]:
 
 
 def build_ner_recognizer(cfg: "Config") -> "Recognizer | None":
-    """Recognizer for cfg.ner["backend"] ("hf", "gliner", "ollama"), or None when unset."""
+    """Recognizer for cfg.ner["backend"] ("hf", "gliner", "ollama", "openai"/"strata"),
+    or None when unset."""
     ner = dict(cfg.ner or {})
     backend = str(ner.get("backend") or "").strip().lower()
     if backend in ("", "none", "off", "false"):
@@ -225,9 +262,17 @@ def build_ner_recognizer(cfg: "Config") -> "Recognizer | None":
         if not model:
             raise ValueError('[ner] backend "ollama" needs model = "..." (or [llm] model), '
                              'e.g. "gemma3:4b"')
+        # allow_remote only from [ner]: the original text needs [ner]'s own permission ([llm]
+        # allow_remote is for `deid check`, which sends de-identified text only).
         return OllamaRecognizer(
             model, host=str(ner.get("host") or llm.get("host") or DEFAULT_HOST),
-            allow_remote=bool(ner.get("allow_remote", llm.get("allow_remote", False))),
+            allow_remote=bool(ner.get("allow_remote", False)),
             timeout=float(ner.get("timeout", llm.get("timeout", 120))),
         )
-    raise ValueError(f"unknown [ner] backend {backend!r}; use 'hf', 'gliner' or 'ollama'")
+    if backend in OPENAI_BACKENDS:
+        from .openai_compat import OpenAIRecognizer, ner_section
+
+        return OpenAIRecognizer(ner_section(cfg))
+    raise ValueError(f"[ner] backend {backend!r}을(를) 알 수 없습니다. hf, gliner, ollama, openai 중 "
+                     f"하나를 쓰세요 (unknown [ner] backend {backend!r}; use 'hf', 'gliner', "
+                     "'ollama' or 'openai')")

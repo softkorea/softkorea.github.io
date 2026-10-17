@@ -761,6 +761,9 @@ class Batch:
             return
         texts = list(dict.fromkeys(s.text for s in self.slots if s.detect))
         found = dict(zip(texts, self.detector.detect_document(texts))) if texts else {}
+        drain = getattr(self.detector, "drain_warnings", None)
+        if callable(drain):   # e.g. the LLM backend fell back to the rules (on_error)
+            self.report.warnings.extend(w for w in drain() if w not in self.report.warnings)
         for slot in self.slots:
             spans = self._upgrade(found.get(slot.text, []))
             if slot.typed:

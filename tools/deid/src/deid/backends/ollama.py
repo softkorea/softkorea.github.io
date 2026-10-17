@@ -16,7 +16,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from .. import entities as E
@@ -175,11 +175,13 @@ def build_prompt(text: str, review: bool = True) -> str:
 
 # ---------------------------------------------------------------------- parsing
 
-_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
-_FENCE = re.compile(r"```[A-Za-z]*\s*(.*?)```", re.S)
+# Answer clean-up runs on text a remote server sent, so every step is linear in its length
+# (no backtracking regexes on unbounded input): see _strip_think, _unfence, is_deidentified.
+_THINK_TAG = re.compile(r"<(/?)think>", re.I)
+_FENCE_TAG = re.compile(r"[A-Za-z]*\s*")
 _LIST_KEYS = ("items", "pii", "identifiers", "results", "entities", "findings")
 _PLACEHOLDER = re.compile(r"\[[^\[\]\n]{1,30}\]")
-_MASKED = re.compile(r"\S*\*\S*")
+_TOKEN = re.compile(r"\S+")
 _FILLER = frozenset({
     "님", "씨", "환자", "환자분", "보호자", "선생님", "원장님", "교수님", "이", "가", "은", "는",
     "을", "를", "의", "에게", "께서", "와", "과", "도", "mr", "mrs", "ms", "dr", "patient",
@@ -190,23 +192,52 @@ _QUOTES = "\"'`“”‘’"
 def _loads_lenient(s: str) -> Any:
     try:
         return json.loads(s)
-    except ValueError:
+    except (ValueError, RecursionError):   # RecursionError: absurdly deep nesting
         pass
     dec = json.JSONDecoder()
     for i in sorted(i for i in (s.find("{"), s.find("[")) if i != -1):
         try:
             return dec.raw_decode(s, i)[0]
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
     raise OllamaError("the model's answer is not valid JSON; try again or use another model")
 
 
-def parse_items(raw: str) -> list[dict]:
-    """Item dicts from a model answer ({"items": [...]}, a bare list, code fences allowed)."""
-    s = _THINK.sub("", raw or "").strip()
-    fence = _FENCE.search(s)
-    if fence:
-        s = fence.group(1).strip()
+def _strip_think(s: str) -> str:
+    """`s` without <think>...</think> blocks (an unclosed <think> is kept); linear time."""
+    out: list[str] = []
+    pos, open_at = 0, None
+    for m in _THINK_TAG.finditer(s):
+        if not m.group(1):
+            if open_at is None:
+                open_at = m.start()
+        elif open_at is not None:
+            out.append(s[pos:open_at])
+            pos, open_at = m.end(), None
+    out.append(s[pos:])
+    return "".join(out)
+
+
+def _unfence(s: str) -> str | None:
+    """Content of the first ```lang ... ``` block, or None; linear time."""
+    i = s.find("```")
+    if i == -1:
+        return None
+    j = s.find("```", i + 3)
+    if j == -1:
+        return None
+    inner = s[i + 3:j]
+    return inner[_FENCE_TAG.match(inner).end():]
+
+
+def parse_items(raw: str, entity_map: "Callable[..., str | None] | None" = None) -> list[dict]:
+    """Item dicts from a model answer ({"items": [...]}, a bare list, code fences allowed).
+
+    `entity_map(label, default=OTHER)` maps the item's type label (default entity_for)."""
+    s = _strip_think(raw or "").strip()
+    fence = _unfence(s)
+    if fence is not None:
+        s = fence.strip()
     if not s:
         raise OllamaError("the model returned an empty answer")
     data = _loads_lenient(s)
@@ -221,13 +252,13 @@ def parse_items(raw: str) -> list[dict]:
         return []
     out = []
     for it in data:
-        item = _normalize_item(it)
+        item = _normalize_item(it, entity_map or entity_for)
         if item is not None:
             out.append(item)
     return out
 
 
-def _normalize_item(it: Any) -> dict | None:
+def _normalize_item(it: Any, entity_map: "Callable[..., str | None]" = entity_for) -> dict | None:
     if isinstance(it, str):
         txt, ent, reason = it, None, ""
     elif isinstance(it, dict):
@@ -241,12 +272,21 @@ def _normalize_item(it: Any) -> dict | None:
     if not isinstance(txt, str):
         return None
     txt = txt.strip().strip(_QUOTES).strip()
-    return {"text": txt, "entity": entity_for(ent, default=OTHER), "reason": str(reason).strip()}
+    out = {"text": txt, "entity": entity_map(ent, default=OTHER), "reason": str(reason).strip()}
+    person = it.get("person") if isinstance(it, dict) else None
+    if isinstance(person, str) and person.strip():
+        # canonical spelling of the person (OpenAI-compatible backend's person grouping)
+        out["person"] = person.strip().strip(_QUOTES).strip()
+    return out
 
 
 def is_deidentified(value: str) -> bool:
-    """True if `value` is only placeholders ([이름1]), masked values (김*준) and filler words."""
-    rest = _MASKED.sub(" ", _PLACEHOLDER.sub(" ", value))
+    """True if `value` is only placeholders ([이름1]), masked values (김*준) and filler words.
+
+    A masked value is a whitespace-separated word containing '*' (linear time; the former
+    regex \\S*\\*\\S* was quadratic on long runs without spaces)."""
+    rest = _PLACEHOLDER.sub(" ", value)
+    rest = _TOKEN.sub(lambda m: " " if "*" in m.group() else m.group(), rest)
     return all(w.casefold() in _FILLER for w in re.findall(r"[^\W_]+", rest))
 
 

@@ -181,6 +181,54 @@ def _log_config_change(change: ConfigChange, log: "Log", notify: bool) -> None:
             pass
 
 
+# ---------------------------------------------------------------------- LLM server notice
+
+
+def transport_notice(cfg: "Config | None") -> str | None:
+    """Warning (Korean + short English) when ``[ner] backend = "openai"`` (or ``"ollama"`` with
+    a remote host) sends the ORIGINAL text to an LLM server outside this computer (e.g. Strata
+    on the clinic PC); None when the backend is off or the server is this computer. Never
+    raises; used by the CLI (stderr), the watch log and the web page."""
+    if cfg is None:
+        return None
+    try:
+        from .backends import openai_compat as oc
+
+        if oc.ner_enabled(cfg):
+            return oc.transport_warning(oc.ner_section(cfg), raw_text=True)
+        ner = dict(cfg.ner or {})
+        if str(ner.get("backend") or "").strip().casefold() in ("ollama", "llm"):
+            # [ner] backend = "ollama" with a host outside this computer ([ner] allow_remote)
+            from .backends.ollama import DEFAULT_HOST, check_host
+
+            host = str(ner.get("host") or (cfg.llm or {}).get("host") or DEFAULT_HOST)
+            return oc.transport_warning({"base_url": check_host(host, allow_remote=True)},
+                                        raw_text=True)
+        return None
+    except Exception:  # noqa: BLE001 - a notice must never stop anything
+        return None
+
+
+def _rules_only(cfg: "Config") -> "Config":
+    """`cfg` without an OpenAI-compatible [ner] backend, for log display names: a file name
+    must not cost another request (and another timeout) to an LLM server that may just have
+    failed. Other settings, including other [ner] backends, are kept as they are."""
+    import dataclasses
+
+    try:
+        from .backends import openai_compat as oc
+
+        if not oc.ner_enabled(cfg):
+            return cfg
+    except Exception:  # noqa: BLE001  # pragma: no cover
+        return cfg
+    return dataclasses.replace(cfg, ner={})
+
+
+def _llm_failure(e: BaseException) -> bool:
+    return type(e).__name__ == "LLMError" and (type(e).__module__ or "").startswith("deid.")
+
+
 # ---------------------------------------------------------------------- watcher
 
 
@@ -284,7 +332,7 @@ def _safe_display(path: Path, cfg: "Config", vault: "Vault | None" = None) -> st
     from .engine import Detector
 
     try:
-        stem = formats.deid_filename(path.stem, Detector(cfg), Anonymizer(cfg, vault),
+        stem = formats.deid_filename(path.stem, Detector(_rules_only(cfg)), Anonymizer(cfg, vault),
                                      guess_names=False)
     except Exception:  # pragma: no cover - never let logging fail the watcher
         stem = "(file)"
@@ -411,19 +459,28 @@ def watch_once(state: WatchState, in_dir: str | os.PathLike, out_dir: str | os.P
             state.dirty = True
             continue
         rel_dir = Path(rel).parent
+        detector = Detector(cfg)
         try:
             report = formats.process_to_dir(
-                path, out_dir, Detector(cfg), Anonymizer(cfg, vault), cfg,
+                path, out_dir, detector, Anonymizer(cfg, vault), cfg,
                 rel_dir=None if str(rel_dir) in ("", ".") else rel_dir)
         except Exception as e:  # noqa: BLE001 - one bad file must not stop the watcher
             shown = _safe_display(path, cfg, vault)
             log(f"FAIL {shown}: {_failure_reason(e, path, in_dir, shown)}")
+            if _llm_failure(e):   # on_error = "fail": nothing written for this file
+                log("   ! LLM 서버 문제로 이 파일은 결과를 만들지 않았습니다. 서버를 확인(deid doctor)한 뒤 "
+                    "파일을 다시 저장하거나 다시 넣으면 처리합니다 (LLM server problem: file not "
+                    "processed; save or drop it again to retry)")
             state.files[key] = {"sig": sig_list, "status": FAILED}
             state.dirty = True
             if notify:   # lock screen: no file names at all
                 from . import mac
                 mac.notify("deid 감시 실패", f"{_kind(path)} 1개를 처리하지 못했습니다 - 로그를 확인하세요")
             continue
+        # e.g. the LLM backend fell back to the rules while de-identifying the file name
+        drain = getattr(detector, "drain_warnings", None)
+        if callable(drain):
+            report.warnings.extend(w for w in drain() if w not in report.warnings)
         # The output name is de-identified (formats.deid_filename) and is what OUT shows anyway.
         out_rel = Path(report.output).relative_to(out_dir).as_posix()
         summary = formats.format_counts(report, cfg)
@@ -435,7 +492,11 @@ def watch_once(state: WatchState, in_dir: str | os.PathLike, out_dir: str | os.P
         reports.append(report)
         if notify:   # lock screen: counts only, like `deid file --notify`
             from . import mac
-            mac.notify("deid 처리 완료", f"{_kind(path)} 1개: {summary} - 결과를 확인하세요")
+            from .backends.openai_compat import FALLBACK_NOTE, is_fallback_warning
+
+            note = (f" - {FALLBACK_NOTE}" if any(is_fallback_warning(w) for w in report.warnings)
+                    else "")
+            mac.notify("deid 처리 완료", f"{_kind(path)} 1개: {summary}{note} - 결과를 확인하세요")
     for key in [k for k in state.files if k not in seen_keys]:
         del state.files[key]   # removed from IN: forget, so putting it back reprocesses it
         state.dirty = True
@@ -490,6 +551,9 @@ def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
 
     log(f"감시 시작 (watching, deid {__version__}): {in_dir} -> {out_dir}, {interval:g}초 간격. "
         "설정 파일을 고치면 다음 확인 때 다시 읽습니다. 종료: Ctrl-C")
+    notice = transport_notice(live.cfg)
+    if notice:
+        log(f"! {notice}")
     passes = 0
     try:
         while True:
@@ -497,6 +561,10 @@ def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
             change = live.refresh()   # names added to config.toml apply from this pass on
             if change is not None:
                 _log_config_change(change, log, notify)
+                if change.ok and transport_notice(live.cfg) != notice:
+                    notice = transport_notice(live.cfg)
+                    log(f"! {notice}" if notice else
+                        "LLM 서버로 원문을 보내지 않습니다 (raw text no longer leaves this computer)")
             try:
                 watch_once(state, in_dir, out_dir, live.cfg, vault=vault, log=log, notify=notify)
                 state.save()
@@ -522,4 +590,4 @@ def run_watch(in_dir: str | os.PathLike, out_dir: str | os.PathLike, *,
 
 
 __all__ = ("WatchState", "watch_once", "run_watch", "scan", "file_key", "state_path_for",
-           "LiveConfig", "ConfigChange", "config_error_text", "config_location")
+           "LiveConfig", "ConfigChange", "config_error_text", "config_location", "transport_notice")

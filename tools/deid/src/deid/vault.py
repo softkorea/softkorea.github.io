@@ -119,6 +119,8 @@ class Vault:
         self.tokens: dict[str, str] = {}               # token -> original (first seen)
         self._keys: dict[tuple[str, str], str] = {}    # (entity, normalized) -> token
         self._counters: dict[str, int] = {}            # entity -> last number issued
+        # Keys that point at another value's token (person groups: "서윤" -> token of "박서윤").
+        self._aliases: set[tuple[str, str]] = set()
         self._restore_rx: re.Pattern | None = None
 
     def __len__(self) -> int:
@@ -135,12 +137,40 @@ class Vault:
             entity_of.setdefault(token, entity)
         return [(entity_of[t], o, t) for t, o in self.tokens.items() if t in entity_of]
 
-    def token_for(self, entity: str, original: str, label: str) -> str:
-        """Return the token for this value, issuing "[{label}{n}]" (n per entity) if new."""
+    def token_for(self, entity: str, original: str, label: str,
+                  group: str | None = None) -> str:
+        """Return the token for this value, issuing "[{label}{n}]" (n per entity) if new.
+
+        ``group``: the canonical spelling of the person this value names (an LLM backend
+        groups "박서윤", "서윤" and "박모씨" under "박서윤"). The token is then the group's
+        token - issued for the canonical spelling if it has none yet - and `original` becomes
+        an alias of it, so later occurrences of "서윤" without a group get the same token.
+        restore() turns a group's token back into the group's FIRST-SEEN canonical spelling
+        ("박서윤"), also where the text said "서윤" or "박모씨". A value that already has a
+        token of its own keeps it for ungrouped occurrences; an alias moves to the newest
+        group that claims it. A canonical spelling that is already an alias ("서윤" of
+        "박서윤") keeps that token: a person's token never changes because a later request
+        named a shorter spelling as the canonical one.
+        """
+        if group is not None and str(group).strip():
+            gkey = (entity, normalize_value(entity, str(group)))
+            key = (entity, normalize_value(entity, original))
+            if gkey != key:
+                token = self._keys.get(gkey)
+                if token is None:
+                    # first sight of this person: the canonical spelling owns the token
+                    token = self._issue(entity, gkey, str(group).strip(), label)
+                if key not in self._keys or key in self._aliases:
+                    self._keys[key] = token
+                    self._aliases.add(key)
+                return token
         key = (entity, normalize_value(entity, original))
         token = self._keys.get(key)
         if token is not None:
             return token
+        return self._issue(entity, key, original, label)
+
+    def _issue(self, entity: str, key: tuple[str, str], original: str, label: str) -> str:
         n = self._counters.get(entity, 0)
         while True:  # skip numbers taken by another entity sharing the same label
             n += 1
@@ -208,6 +238,7 @@ class Vault:
             self._keys.setdefault(key, token)
         for entity, n in other._counters.items():
             self._counters[entity] = max(n, self._counters.get(entity, 0))
+        self._aliases |= {k for k in other._aliases if self._keys.get(k) == other._keys.get(k)}
         self._restore_rx = None
 
     # ------------------------------------------------------------------ persistence
@@ -217,6 +248,7 @@ class Vault:
             "tokens": self.tokens,
             "keys": [[ent, norm, tok] for (ent, norm), tok in self._keys.items()],
             "counters": self._counters,
+            "aliases": [[ent, norm] for ent, norm in sorted(self._aliases)],
         }
 
     @classmethod
@@ -225,6 +257,7 @@ class Vault:
         v.tokens = {str(t): str(o) for t, o in data["tokens"].items()}
         v._keys = {(str(e), str(n)): str(t) for e, n, t in data["keys"]}
         v._counters = {str(e): int(n) for e, n in data["counters"].items()}
+        v._aliases = {(str(e), str(n)) for e, n in data.get("aliases") or ()}   # absent before 0.3
         return v
 
     def save(self, path: str | os.PathLike, passphrase: str) -> None:

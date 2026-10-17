@@ -18,6 +18,11 @@ class Span:
     text: str
     score: float         # 0.0-1.0 confidence
     source: str          # recognizer name, e.g. "kr_rrn", "names", "dict", "ner_hf", "propagate"
+    # Optional person group (PERSON only): the canonical spelling of the person this span
+    # names, e.g. "박서윤" for the spans "서윤" and "박모씨". Spans of one group share one
+    # pseudonym (Vault.token_for(..., group=)). Set only by the OpenAI-compatible LLM
+    # backend, and only when that spelling occurs in the same document. Default None.
+    group: str | None = None
 
     def __post_init__(self) -> None:
         if self.start < 0 or self.end <= self.start:

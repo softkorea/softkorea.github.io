@@ -35,6 +35,9 @@ class Anonymizer:
         action = self.cfg.action_for(span.entity)
         label = self.cfg.label_for(span.entity)
         if action == "pseudo":
+            group = getattr(span, "group", None)
+            if group:   # one person, several spellings ("박서윤", "서윤", "박모씨"): one token
+                return self.vault.token_for(span.entity, span.text, label, group=group), action
             return self.vault.token_for(span.entity, span.text, label), action
         if action == "mask":
             return mask_value(span.entity, span.text), action

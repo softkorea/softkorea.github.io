@@ -21,11 +21,12 @@ PLATE = "PLATE"                    # 차량번호
 URL = "URL"
 MEDICAL_LICENSE = "MEDICAL_LICENSE"  # 의사/간호사 등 보건의료인 면허번호 (문맥 필요)
 OTHER = "OTHER"                    # LLM이 찾았지만 유형을 특정하지 못한 식별자
+ORG = "ORG"                        # 병원·의원·회사·학교 등 고유 기관 이름 (LLM 백엔드가 찾음; 기본 유지)
 
 ALL = (
     PERSON, RRN, FRN, PHONE, EMAIL, ADDRESS, BIRTHDATE, DATE, CARD, ACCOUNT,
     PASSPORT, DRIVER_LICENSE, BRN, HEALTH_INSURANCE, MRN, IP, PLATE, URL,
-    MEDICAL_LICENSE, OTHER,
+    MEDICAL_LICENSE, OTHER, ORG,
 )
 
 LABELS_KO = {
@@ -49,6 +50,7 @@ LABELS_KO = {
     URL: "URL",
     MEDICAL_LICENSE: "면허번호",
     OTHER: "기타",
+    ORG: "기관",
 }
 
 # Actions: "pseudo" -> consistent token like [이름1]
@@ -77,6 +79,9 @@ DEFAULT_ACTIONS = {
     URL: "keep",
     MEDICAL_LICENSE: "redact",
     OTHER: "redact",
+    # Organisation names are counted but left as written unless [actions] ORG = "pseudo" /
+    # "redact": a hospital or school name alone rarely identifies a patient.
+    ORG: "keep",
 }
 
 

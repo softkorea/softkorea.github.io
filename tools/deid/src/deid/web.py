@@ -18,7 +18,12 @@ Standard library only (ThreadingHTTPServer). Safety rules:
   within a minute, not only at the next request;
 * settings follow the config file (:class:`deid.watch.LiveConfig`): every request re-reads it
   when it changed. A file that no longer loads keeps the previous settings, and every
-  response says so (``config_warning`` in JSON / the report header, a banner on the page).
+  response says so (``config_warning`` in JSON / the report header, a banner on the page);
+* with ``[ner] backend = "openai"`` and a server outside this computer (Strata on the clinic
+  PC) the ORIGINAL text goes to that server for detection: the start-up banner and the page
+  say so (``#llm-warning``) instead of "local only", and warnings of an LLM pass that fell
+  back to the rules (``on_error = "rules_only"``) are in ``warnings``. An LLM failure with
+  ``on_error = "fail"`` answers 422 with a message that holds no text.
 
 Endpoints: ``GET /`` (page), ``POST /api/text`` {text} -> {text, counts, summary, warnings},
 ``POST /api/restore`` {text} -> {text, restored, unknown, in_links} (tokens inside URLs are
@@ -48,7 +53,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import formats
 from .types import Report
-from .watch import LiveConfig
+from .watch import LiveConfig, transport_notice
 
 if TYPE_CHECKING:  # pragma: no cover
     from .config import Config
@@ -64,6 +69,7 @@ _WORK_DIR = re.compile(r"deid-web-(?:(\d+)-)?[a-z0-9_]{8}")
 TOKEN_HEADER = "X-Deid-Token"
 PAGE = Path(__file__).with_name("web") / "index.html"
 _UNSAFE_NAME = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+LOCAL_NOTE = "모든 처리는 이 컴퓨터 안에서만 이루어집니다. 인터넷으로 보내지 않습니다. (local only, 127.0.0.1)"
 
 
 class HttpError(Exception):
@@ -175,6 +181,11 @@ class DeidServer(ThreadingHTTPServer):
             pass
         return self.config_warning()
 
+    def transport_notice(self) -> str | None:
+        """Warning when the current settings send the ORIGINAL text to an LLM server outside
+        this computer ([ner] backend = "openai"), else None."""
+        return transport_notice(self.cfg)
+
     def config_warning(self) -> str | None:
         err = self.live.error
         if not err:
@@ -240,8 +251,12 @@ class DeidServer(ThreadingHTTPServer):
             src.parent.mkdir()
             src.write_bytes(data)
             with self.work_lock, self.session() as vault:
-                report = formats.process_to_dir(src, Path(td) / "out", self._detector(vault, cfg),
+                det = self._detector(vault, cfg)
+                report = formats.process_to_dir(src, Path(td) / "out", det,
                                                 Anonymizer(cfg, vault), cfg)
+            drain = getattr(det, "drain_warnings", None)   # e.g. from the file name (LLM backend)
+            if callable(drain):
+                report.warnings.extend(w for w in drain() if w not in report.warnings)
             out = Path(report.output)
             return out.name, out.read_bytes(), report
 
@@ -397,8 +412,15 @@ class _Handler(BaseHTTPRequestHandler):
             raise HttpError(404, "없는 주소입니다 (not found)")
         nonce = secrets.token_urlsafe(16)
         warning = self.server.config_warning()
+        remote = self.server.transport_notice()
+        local = (LOCAL_NOTE if not remote else
+                 "기본으로는 이 컴퓨터 안에서만 처리하지만, 지금 설정은 탐지를 위해 원문을 진료실 LLM 서버로 "
+                 "보냅니다 (this computer and the LLM server in the settings)")
         page = (self.server.page.replace("__CONFIG_HIDDEN__", "" if warning else " hidden")
                 .replace("__CONFIG_WARNING__", html.escape(warning or ""))
+                .replace("__LOCAL_NOTE__", html.escape(local))
+                .replace("__LLM_HIDDEN__", "" if remote else " hidden")
+                .replace("__LLM_WARNING__", html.escape(remote or ""))
                 .replace("__NONCE__", nonce)
                 .replace("__TOKEN__", self.server.token)
                 .replace("__MAX_MB__", str(MAX_UPLOAD // (1024 * 1024))))
@@ -593,6 +615,9 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = True, cfg: "Config | No
     _say(out, f"deid {__version__} 웹 화면 (local web UI) - 이 컴퓨터에서만 열립니다 (127.0.0.1 only)",
          f"  {server.url}", "설정 파일(config.toml)을 고치면 다음 요청부터 적용됩니다. "
          "deid를 업데이트했다면 껐다가 다시 실행하세요.", "종료: Ctrl-C (press Ctrl-C to stop)")
+    notice = server.transport_notice()
+    if notice:
+        _say(out, f"! {notice}")
     old = _stop_on_signals()
     try:
         if open_browser:
