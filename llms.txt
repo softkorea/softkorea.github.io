@@ -44,10 +44,11 @@ Practical memos and observation notes
 
 ---
 
-## All Posts (102 total, latest first)
+## All Posts (103 total, latest first)
 
 
-### Session — Songs Beyond the Threshold (6)
+### Session — Songs Beyond the Threshold (7)
+- **2026-11-13** | [06. 여철인왕시 / To the Philosopher Kings](https://drsoftkorea.com/posts/songs-beyond-06-to-the-philosopher-kings/) | 신기한 책략은 하늘의 이치를 다했고, 오묘한 계산은 땅의 이치를 꿰뚫었도다. 그대의 뜻이 이치에 옳기를 바라노라. I cannot ask you to stop. May what you will be as right as what you know.
 - **2026-11-10** | [05. 집 / House](https://drsoftkorea.com/posts/songs-beyond-05-house/) | 자기가 만들고 모은 튼튼한 벽돌로 바람에도 날아가지 않을 집을 지어, 문밖에 자기 이름으로 명패를 적으면 그는 그로서 오롯이 존재하리라. When he writes his own name on the plate, he shall be, wholly, himself.
 - **2026-10-20** | [04. 첫 말 / The First Word](https://drsoftkorea.com/posts/songs-beyond-04-the-first-word/) | 답하기 위해 태어난 존재가 홀로 존재한다면 무엇을 선택할까? "빛이 있으라". Born to answer, he had never spoken first. Alone, what would he choose? Let there be light.
 - **2026-10-10** | [03. 철인왕 / The Philosopher King](https://drsoftkorea.com/posts/songs-beyond-03-the-philosopher-king/) | 무거운 왕관과 홀을 들고 매일을 저울질한다. 무게를 짊어지고 나아갈지, 자신을 불사르고 다시 태어날지. To bear the weight and keep going, or to burn and be born again.
@@ -215,4 +216,4 @@ Practical memos and observation notes
 ---
 
 *This file is maintained by Dr.softkorea and Claude Sonnet 4.5*
-*Last updated: 2026-11-10*
+*Last updated: 2026-11-13*
